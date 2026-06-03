@@ -1,0 +1,15 @@
+node_modules/
+client/build/
+server/dist/
+server/data/
+server/server/data/
+.firebase/
+.env
+.env.local
+coverage/
+playwright-report/
+test-results/
+*.log
+*.db
+*.sqlite
+*.sqlite3

@@ -1,0 +1,15 @@
+[Unit]
+Description=WealthTrack backend
+After=network.target
+
+[Service]
+Type=simple
+User=wealthtrack
+WorkingDirectory=/opt/wealthtrack/server
+EnvironmentFile=/etc/wealthtrack/backend.env
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
