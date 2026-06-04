@@ -5,15 +5,38 @@ PORT="${PORT:-4001}"
 SERVER_NAME="${BACKEND_HOSTNAME:-35.211.52.83.nip.io}"
 
 if ! command -v nginx >/dev/null 2>&1; then
-  echo "nginx is not installed on the VM" >&2
-  exit 1
+  sudo apt-get update -y
+  sudo apt-get install -y nginx
 fi
 
 cert="/etc/letsencrypt/live/${SERVER_NAME}/fullchain.pem"
 key="/etc/letsencrypt/live/${SERVER_NAME}/privkey.pem"
 if [[ ! -f "$cert" || ! -f "$key" ]]; then
-  echo "Missing TLS certificate for ${SERVER_NAME}; expected $cert and $key" >&2
-  exit 1
+  if ! command -v certbot >/dev/null 2>&1; then
+    sudo apt-get update -y
+    sudo apt-get install -y certbot
+  fi
+  sudo mkdir -p /var/www/html
+  sudo tee /etc/nginx/sites-available/wealthtrack-acme >/dev/null <<CONF
+server {
+  listen 80;
+  server_name ${SERVER_NAME};
+
+  location /.well-known/acme-challenge/ {
+    root /var/www/html;
+  }
+
+  location / {
+    return 200 "WealthTrack certificate setup\\n";
+  }
+}
+CONF
+  sudo ln -sf /etc/nginx/sites-available/wealthtrack-acme /etc/nginx/sites-enabled/wealthtrack-acme
+  sudo rm -f /etc/nginx/sites-enabled/default
+  sudo nginx -t
+  sudo systemctl enable nginx
+  sudo systemctl restart nginx
+  sudo certbot certonly --webroot --webroot-path /var/www/html --non-interactive --agree-tos --register-unsafely-without-email -d "${SERVER_NAME}"
 fi
 
 timestamp="$(date +%Y%m%d-%H%M%S)"
@@ -23,6 +46,7 @@ fi
 if [[ -f /etc/nginx/sites-enabled/default ]]; then
   sudo rm -f /etc/nginx/sites-enabled/default
 fi
+sudo rm -f /etc/nginx/sites-enabled/wealthtrack-acme
 sudo rm -f /etc/nginx/conf.d/wealthtrack-api.conf
 
 sudo tee /etc/nginx/sites-available/wealthtrack >/dev/null <<CONF
