@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allocation, buildNetWorthSeries, monthlyChange, netWorth, staleAccounts, twoPointComparison } from "../src/calculations";
+import { allocation, buildNetWorthSeries, buildProjectedNetWorthSeries, monthlyChange, netWorth, staleAccounts, twoPointComparison } from "../src/calculations";
 
 const base = { userId: 1, currency: "GBP", updateFrequency: "monthly", tagsJson: "[]", notes: null, isArchived: 0, createdAt: "", updatedAt: "" };
 
@@ -54,5 +54,18 @@ describe("wealth calculations", () => {
       { date: "2026-05-30", netWorth: 250000 },
       { date: "2026-06-03", netWorth: 325000 }
     ]);
+  });
+
+  it("projects net worth to a retirement date from account history", () => {
+    const series = buildProjectedNetWorthSeries([
+      { accountId: 1, kind: "asset", value: 1000, valueDate: "2025-06-01" },
+      { accountId: 1, kind: "asset", value: 1100, valueDate: "2026-06-01" },
+      { accountId: 2, kind: "liability", value: 500, valueDate: "2025-06-01" },
+      { accountId: 2, kind: "liability", value: 450, valueDate: "2026-06-01" }
+    ], "2027-06-01");
+
+    expect(series[0]).toEqual({ date: "2026-06-01", predictedNetWorth: 650 });
+    expect(series[series.length - 1].date).toBe("2027-06-01");
+    expect(series[series.length - 1].predictedNetWorth).toBeGreaterThan(650);
   });
 });

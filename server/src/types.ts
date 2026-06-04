@@ -29,4 +29,17 @@ export interface ValueEntry {
 export interface AccountWithLatest extends Account {
   latestValue: number | null;
   latestValueDate: string | null;
+  initialValue?: number | null;
+  initialValueDate?: string | null;
+  previousValue?: number | null;
+  previousValueDate?: string | null;
+  lastMonthValue?: number | null;
+  lastMonthValueDate?: string | null;
+  lastQuarterValue?: number | null;
+  lastQuarterValueDate?: string | null;
+  yearStartValue?: number | null;
+  yearStartValueDate?: string | null;
+  lastYearValue?: number | null;
+  lastYearValueDate?: string | null;
+  recentValues?: number[];
 }

@@ -4,7 +4,7 @@ import cors from "cors";
 import express, { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
-import { allocation, buildNetWorthSeries, monthlyChange, netWorth, staleAccounts, twoPointComparison } from "./calculations";
+import { allocation, buildNetWorthSeries, buildProjectedNetWorthSeries, monthlyChange, netWorth, staleAccounts, twoPointComparison } from "./calculations";
 import { initializeDatabase, openDatabase } from "./db";
 import { Account, AccountWithLatest, ValueEntry } from "./types";
 
@@ -20,6 +20,9 @@ const accountSchema = z.object({
   valueDate: z.string().optional()
 });
 const valueSchema = z.object({ value: z.number().nonnegative(), valueDate: z.string(), note: z.string().optional().nullable(), source: z.string().default("manual") });
+const profileSchema = z.object({
+  retirementDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional()
+});
 
 export function createApp(db = openDatabase()) {
   initializeDatabase(db);
@@ -78,29 +81,69 @@ export function createApp(db = openDatabase()) {
     res.json({ user, profile });
   });
 
+  app.patch("/api/profile", requireAuth, (req, res) => {
+    const parsed = profileSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const userId = (req as any).user.id;
+    db.prepare(`
+      UPDATE profiles SET retirementDate = ?, updatedAt = CURRENT_TIMESTAMP WHERE userId = ?
+    `).run(parsed.data.retirementDate ?? null, userId);
+    res.json({ profile: db.prepare("SELECT * FROM profiles WHERE userId = ?").get(userId) });
+  });
+
   function latestAccounts(userId: number): AccountWithLatest[] {
-    return db.prepare(`
+    const accounts = db.prepare(`
       SELECT a.*,
         (SELECT value FROM value_entries v WHERE v.accountId = a.id ORDER BY valueDate DESC, id DESC LIMIT 1) AS latestValue,
-        (SELECT valueDate FROM value_entries v WHERE v.accountId = a.id ORDER BY valueDate DESC, id DESC LIMIT 1) AS latestValueDate
+        (SELECT valueDate FROM value_entries v WHERE v.accountId = a.id ORDER BY valueDate DESC, id DESC LIMIT 1) AS latestValueDate,
+        (SELECT value FROM value_entries v WHERE v.accountId = a.id ORDER BY valueDate ASC, id ASC LIMIT 1) AS initialValue,
+        (SELECT valueDate FROM value_entries v WHERE v.accountId = a.id ORDER BY valueDate ASC, id ASC LIMIT 1) AS initialValueDate,
+        (SELECT value FROM value_entries v WHERE v.accountId = a.id ORDER BY valueDate DESC, id DESC LIMIT 1 OFFSET 1) AS previousValue,
+        (SELECT valueDate FROM value_entries v WHERE v.accountId = a.id ORDER BY valueDate DESC, id DESC LIMIT 1 OFFSET 1) AS previousValueDate,
+        (SELECT value FROM value_entries v WHERE v.accountId = a.id AND v.valueDate <= date((SELECT valueDate FROM value_entries lv WHERE lv.accountId = a.id ORDER BY valueDate DESC, id DESC LIMIT 1), '-1 month') ORDER BY valueDate DESC, id DESC LIMIT 1) AS lastMonthValue,
+        (SELECT valueDate FROM value_entries v WHERE v.accountId = a.id AND v.valueDate <= date((SELECT valueDate FROM value_entries lv WHERE lv.accountId = a.id ORDER BY valueDate DESC, id DESC LIMIT 1), '-1 month') ORDER BY valueDate DESC, id DESC LIMIT 1) AS lastMonthValueDate,
+        (SELECT value FROM value_entries v WHERE v.accountId = a.id AND v.valueDate <= date((SELECT valueDate FROM value_entries lv WHERE lv.accountId = a.id ORDER BY valueDate DESC, id DESC LIMIT 1), '-3 months') ORDER BY valueDate DESC, id DESC LIMIT 1) AS lastQuarterValue,
+        (SELECT valueDate FROM value_entries v WHERE v.accountId = a.id AND v.valueDate <= date((SELECT valueDate FROM value_entries lv WHERE lv.accountId = a.id ORDER BY valueDate DESC, id DESC LIMIT 1), '-3 months') ORDER BY valueDate DESC, id DESC LIMIT 1) AS lastQuarterValueDate,
+        (SELECT value FROM value_entries v WHERE v.accountId = a.id AND v.valueDate <= date(strftime('%Y', (SELECT valueDate FROM value_entries lv WHERE lv.accountId = a.id ORDER BY valueDate DESC, id DESC LIMIT 1)) || '-01-01') ORDER BY valueDate DESC, id DESC LIMIT 1) AS yearStartValue,
+        (SELECT valueDate FROM value_entries v WHERE v.accountId = a.id AND v.valueDate <= date(strftime('%Y', (SELECT valueDate FROM value_entries lv WHERE lv.accountId = a.id ORDER BY valueDate DESC, id DESC LIMIT 1)) || '-01-01') ORDER BY valueDate DESC, id DESC LIMIT 1) AS yearStartValueDate,
+        (SELECT value FROM value_entries v WHERE v.accountId = a.id AND v.valueDate <= date((SELECT valueDate FROM value_entries lv WHERE lv.accountId = a.id ORDER BY valueDate DESC, id DESC LIMIT 1), '-1 year') ORDER BY valueDate DESC, id DESC LIMIT 1) AS lastYearValue,
+        (SELECT valueDate FROM value_entries v WHERE v.accountId = a.id AND v.valueDate <= date((SELECT valueDate FROM value_entries lv WHERE lv.accountId = a.id ORDER BY valueDate DESC, id DESC LIMIT 1), '-1 year') ORDER BY valueDate DESC, id DESC LIMIT 1) AS lastYearValueDate
       FROM accounts a WHERE a.userId = ? ORDER BY a.isArchived ASC, a.name ASC
     `).all(userId) as AccountWithLatest[];
+    const recentValues = db.prepare(`
+      SELECT value FROM (
+        SELECT value, valueDate, id FROM value_entries WHERE accountId = ? ORDER BY valueDate DESC, id DESC LIMIT 8
+      ) ORDER BY valueDate ASC, id ASC
+    `);
+    return accounts.map((account) => ({
+      ...account,
+      recentValues: (recentValues.all(account.id) as Array<{ value: number }>).map((row) => Number(row.value))
+    }));
   }
 
-  function netWorthSeries(userId: number) {
-    const rows = db.prepare(`
+  function netWorthRows(userId: number) {
+    return db.prepare(`
       SELECT a.id AS accountId, a.kind, v.value, v.valueDate
       FROM accounts a JOIN value_entries v ON v.accountId = a.id
       WHERE a.userId = ? AND a.isArchived = 0
       ORDER BY v.valueDate ASC, v.id ASC
     `).all(userId) as Array<{ accountId: number; kind: string; value: number; valueDate: string }>;
-    return buildNetWorthSeries(rows);
+  }
+
+  function netWorthSeries(userId: number) {
+    return buildNetWorthSeries(netWorthRows(userId));
+  }
+
+  function projectedNetWorthSeries(userId: number, retirementDate: string | null | undefined) {
+    return buildProjectedNetWorthSeries(netWorthRows(userId), retirementDate);
   }
 
   app.get("/api/dashboard", requireAuth, (req, res) => {
     const userId = (req as any).user.id;
     const accounts = latestAccounts(userId);
     const series = netWorthSeries(userId);
+    const profile = db.prepare("SELECT retirementDate FROM profiles WHERE userId = ?").get(userId) as { retirementDate: string | null } | undefined;
+    const retirementDate = profile?.retirementDate ?? null;
     const active = accounts.filter((account) => !account.isArchived);
     const totalAssets = active.filter((account) => account.kind === "asset").reduce((sum, account) => sum + Number(account.latestValue ?? 0), 0);
     const totalLiabilities = active.filter((account) => account.kind === "liability").reduce((sum, account) => sum + Math.abs(Number(account.latestValue ?? 0)), 0);
@@ -110,7 +153,11 @@ export function createApp(db = openDatabase()) {
       allocation: allocation(accounts),
       staleAccounts: staleAccounts(accounts),
       insights: buildInsights(accounts, series),
-      series
+      series,
+      projection: {
+        retirementDate,
+        series: projectedNetWorthSeries(userId, retirementDate)
+      }
     });
   });
 

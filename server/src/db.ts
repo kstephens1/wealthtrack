@@ -30,6 +30,7 @@ function migrate(db: Database.Database) {
       name TEXT NOT NULL,
       defaultCurrency TEXT NOT NULL DEFAULT 'GBP',
       dateFormat TEXT NOT NULL DEFAULT 'yyyy-MM-dd',
+      retirementDate TEXT,
       hideBalancesDefault INTEGER NOT NULL DEFAULT 0,
       createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -90,6 +91,10 @@ function migrate(db: Database.Database) {
       createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
   `);
+  const profileColumns = db.prepare("PRAGMA table_info(profiles)").all() as Array<{ name: string }>;
+  if (!profileColumns.some((column) => column.name === "retirementDate")) {
+    db.prepare("ALTER TABLE profiles ADD COLUMN retirementDate TEXT").run();
+  }
 }
 
 function seedUser(db: Database.Database) {

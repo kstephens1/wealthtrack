@@ -81,3 +81,69 @@ export function buildNetWorthSeries(rows: NetWorthSeriesRow[]) {
     return { date, netWorth: total };
   });
 }
+
+export function buildProjectedNetWorthSeries(rows: NetWorthSeriesRow[], retirementDate: string | null | undefined) {
+  if (!retirementDate || !/^\d{4}-\d{2}-\d{2}$/.test(retirementDate) || rows.length === 0) return [];
+  const sortedRows = [...rows].sort((a, b) => a.valueDate.localeCompare(b.valueDate));
+  const latestDate = sortedRows[sortedRows.length - 1].valueDate;
+  if (retirementDate <= latestDate) return [];
+
+  const rowsByAccount = new Map<number, NetWorthSeriesRow[]>();
+  for (const row of sortedRows) {
+    const accountRows = rowsByAccount.get(row.accountId) ?? [];
+    accountRows.push(row);
+    rowsByAccount.set(row.accountId, accountRows);
+  }
+
+  const accounts = Array.from(rowsByAccount.values()).map((accountRows) => {
+    accountRows.sort((a, b) => a.valueDate.localeCompare(b.valueDate));
+    const first = accountRows[0];
+    const latest = accountRows[accountRows.length - 1];
+    return {
+      kind: latest.kind,
+      latestValue: Math.max(0, Number(latest.value)),
+      latestDate: latest.valueDate,
+      annualRate: projectedAnnualRate(first, latest)
+    };
+  });
+
+  return forecastDates(latestDate, retirementDate).map((date) => {
+    const netWorth = accounts.reduce((sum, account) => {
+      const years = daysBetween(account.latestDate, date) / 365;
+      const projectedValue = Math.max(0, account.latestValue * Math.pow(1 + account.annualRate, years));
+      return sum + signedValue({ kind: account.kind }, projectedValue);
+    }, 0);
+    return { date, predictedNetWorth: Math.round(netWorth) };
+  });
+}
+
+function projectedAnnualRate(first: NetWorthSeriesRow, latest: NetWorthSeriesRow) {
+  const start = Math.max(0, Number(first.value));
+  const end = Math.max(0, Number(latest.value));
+  const days = daysBetween(first.valueDate, latest.valueDate);
+  if (start === 0 || end === 0 || days < 30) return 0;
+  const annualized = Math.pow(end / start, 365 / days) - 1;
+  if (!Number.isFinite(annualized)) return 0;
+  return Math.max(-0.15, Math.min(0.15, annualized));
+}
+
+function forecastDates(startDate: string, retirementDate: string) {
+  const dates = [startDate];
+  const cursor = new Date(`${startDate}T00:00:00`);
+  const end = new Date(`${retirementDate}T00:00:00`);
+  cursor.setMonth(cursor.getMonth() + 1);
+  while (cursor < end) {
+    dates.push(toDateString(cursor));
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+  if (dates[dates.length - 1] !== retirementDate) dates.push(retirementDate);
+  return dates;
+}
+
+function daysBetween(startDate: string, endDate: string) {
+  return (new Date(`${endDate}T00:00:00`).getTime() - new Date(`${startDate}T00:00:00`).getTime()) / 86400000;
+}
+
+function toDateString(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
