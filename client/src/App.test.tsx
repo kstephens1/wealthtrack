@@ -89,11 +89,11 @@ test("account value history listing shows latest dated values first", async () =
   render(<App />);
   fireEvent.click(await screen.findByRole("button", { name: /Cash/ }));
   expect(await screen.findByText("Value history")).toBeInTheDocument();
-  expect(await screen.findByText("2026-06-01")).toBeInTheDocument();
+  expect(await screen.findByText("Jun 1, 2026")).toBeInTheDocument();
 
   const rows = screen.getAllByRole("row").map((row) => row.textContent ?? "");
-  const latestRow = rows.findIndex((row) => row.includes("2026-06-01"));
-  const olderRow = rows.findIndex((row) => row.includes("2026-05-01"));
+  const latestRow = rows.findIndex((row) => row.includes("Jun 1, 2026"));
+  const olderRow = rows.findIndex((row) => row.includes("May 1, 2026"));
   expect(latestRow).toBeGreaterThan(0);
   expect(olderRow).toBeGreaterThan(latestRow);
 });

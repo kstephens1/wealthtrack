@@ -433,6 +433,14 @@ function formatShortDate(date: string) {
   return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(`${date}T00:00:00`));
 }
 
+function formatDisplayDate(date: string) {
+  const parsed = new Date(`${date}T00:00:00`);
+  const month = new Intl.DateTimeFormat("en-GB", { month: "short" }).format(parsed);
+  const day = parsed.getDate();
+  const year = parsed.getFullYear();
+  return `${month} ${day}, ${year}`;
+}
+
 function formatAccountChange(change: number | null, percent: number | null, currency: string, hidden: boolean) {
   if (change === null) return "No previous value";
   const direction = change >= 0 ? "+" : "-";
@@ -456,7 +464,7 @@ function AccountsView({ hidden, onOpen }: { hidden: boolean; onOpen: (account: A
           <tbody>{accounts.map((account) => (
             <tr key={account.id}>
               <td><button className="link-button" onClick={() => onOpen(account)}>{account.name}</button></td>
-              <td>{account.kind}</td><td>{account.category}</td><td>{money(Number(account.latestValue || 0), account.currency, hidden)}</td><td>{account.latestValueDate || "-"}</td>
+              <td>{account.kind}</td><td>{account.category}</td><td>{money(Number(account.latestValue || 0), account.currency, hidden)}</td><td>{account.latestValueDate ? formatDisplayDate(account.latestValueDate) : "-"}</td>
               <td>{!account.isArchived && <button title="Archive account" onClick={async () => { await api(`/api/accounts/${account.id}/archive`, { method: "POST" }); reload(); }}><Archive size={16} /></button>}</td>
             </tr>
           ))}</tbody>
@@ -573,7 +581,7 @@ function AccountDetail({ account, hidden, onBack }: { account: Account; hidden: 
           <tbody>{listedValues.map((value) => (
             <tr key={value.id} className={selected.includes(value.id) ? "selected" : ""}>
               <td><button aria-label={`Compare ${value.valueDate}`} onClick={() => setSelected((items) => [...items.filter((id) => id !== value.id), value.id].slice(-2))}>{selected.includes(value.id) ? "B" : "A/B"}</button></td>
-              <td>{value.valueDate}</td><td>{money(value.value, account.currency, hidden)}</td><td>{value.source}</td><td>{value.note}</td>
+              <td>{formatDisplayDate(value.valueDate)}</td><td>{money(value.value, account.currency, hidden)}</td><td>{value.source}</td><td>{value.note}</td>
               <td><button title="Delete value" onClick={async () => { await api(`/api/values/${value.id}`, { method: "DELETE" }); load(); }}><Trash2 size={16} /></button></td>
             </tr>
           ))}</tbody>
