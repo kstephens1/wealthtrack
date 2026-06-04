@@ -91,7 +91,22 @@ if [[ "${CONFIGURE_NGINX:-0}" == "1" ]]; then
   remote "cd $VM_APP_DIR && sudo BACKEND_HOSTNAME='$backend_host' PORT='$PORT' bash deploy/configure-nginx.sh"
 fi
 
-curl -fsS "$BACKEND_URL/api/hello" | grep -q WealthTrack
+wait_for_backend() {
+  local attempt response
+  for attempt in $(seq 1 24); do
+    if response="$(curl -fsS "$BACKEND_URL/api/hello" 2>/dev/null)"; then
+      if printf '%s' "$response" | grep -q WealthTrack; then
+        return 0
+      fi
+    fi
+    sleep 5
+  done
+  echo "Backend never became ready at $BACKEND_URL/api/hello" >&2
+  remote "sudo systemctl --no-pager --full status ${VM_SERVICE_NAME}.service || true; sudo journalctl -u ${VM_SERVICE_NAME}.service -n 120 --no-pager || true; sudo ss -ltnp '( sport = :4001 )' || true"
+  return 1
+}
+
+wait_for_backend
 REACT_APP_API_BASE_URL="$BACKEND_URL" npm run build --workspace client
 npx firebase deploy --only hosting --project "$FIREBASE_PROJECT_ID"
 ./scripts/smoke-prod.sh
