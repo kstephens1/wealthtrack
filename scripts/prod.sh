@@ -11,4 +11,15 @@ set -a
 source "$env_file"
 set +a
 
+cleanup() {
+  [[ -n "${tmp_gcloud_config:-}" ]] && rm -rf "$tmp_gcloud_config"
+}
+trap cleanup EXIT
+
+if [[ -n "${GCE_INSTANCE:-}" && -z "${CLOUDSDK_CONFIG:-}" && -d "$HOME/.config/gcloud" ]]; then
+  tmp_gcloud_config="$(mktemp -d)"
+  cp -R "$HOME/.config/gcloud/." "$tmp_gcloud_config/"
+  export CLOUDSDK_CONFIG="$tmp_gcloud_config"
+fi
+
 ./scripts/deploy-prod.sh

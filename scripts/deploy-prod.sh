@@ -22,23 +22,7 @@ VM_APP_DIR="${VM_APP_DIR:-/opt/wealthtrack}"
 VM_RUNTIME_USER="${VM_RUNTIME_USER:-wealthtrack}"
 VM_DB_PATH="${VM_DB_PATH:-/var/lib/wealthtrack/wealthtrack.db}"
 PORT="${PORT:-4001}"
-if [[ -n "${GCE_INSTANCE:-}" ]]; then
-  : "${GCP_PROJECT_ID:?Missing GCP_PROJECT_ID}"
-  : "${GCP_ZONE:?Missing GCP_ZONE}"
-  remote() {
-    gcloud compute ssh "$GCE_INSTANCE" --zone "$GCP_ZONE" --project "$GCP_PROJECT_ID" --quiet --command "$1"
-  }
-  copy_to_remote() {
-    gcloud compute scp "$1" "$GCE_INSTANCE:$2" --zone "$GCP_ZONE" --project "$GCP_PROJECT_ID" --quiet
-  }
-  cleanup_ssh_key() { :; }
-else
-  for name in VM_SSH_KEY VM_SSH_USER VM_HOST; do
-    if [[ -z "${!name:-}" ]]; then
-      echo "Missing required environment variable: $name" >&2
-      exit 1
-    fi
-  done
+if [[ -n "${VM_SSH_KEY:-}" && -n "${VM_SSH_USER:-}" && -n "${VM_HOST:-}" ]]; then
   if [[ -f "$VM_SSH_KEY" ]]; then
     ssh_key_path="$VM_SSH_KEY"
   else
@@ -57,6 +41,19 @@ else
   cleanup_ssh_key() {
     [[ "${ssh_key_path:-}" != "${VM_SSH_KEY:-}" ]] && rm -f "$ssh_key_path"
   }
+elif [[ -n "${GCE_INSTANCE:-}" ]]; then
+  : "${GCP_PROJECT_ID:?Missing GCP_PROJECT_ID}"
+  : "${GCP_ZONE:?Missing GCP_ZONE}"
+  remote() {
+    gcloud compute ssh "$GCE_INSTANCE" --zone "$GCP_ZONE" --project "$GCP_PROJECT_ID" --quiet --command "$1"
+  }
+  copy_to_remote() {
+    gcloud compute scp "$1" "$GCE_INSTANCE:$2" --zone "$GCP_ZONE" --project "$GCP_PROJECT_ID" --quiet
+  }
+  cleanup_ssh_key() { :; }
+else
+  echo "Missing deploy transport. Set either GCE_INSTANCE/GCP_PROJECT_ID/GCP_ZONE or VM_SSH_KEY/VM_SSH_USER/VM_HOST." >&2
+  exit 1
 fi
 
 npm install
