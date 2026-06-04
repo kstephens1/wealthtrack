@@ -34,8 +34,18 @@ CONF
   sudo ln -sf /etc/nginx/sites-available/wealthtrack-acme /etc/nginx/sites-enabled/wealthtrack-acme
   sudo rm -f /etc/nginx/sites-enabled/default
   sudo nginx -t
+  for service in apache2 caddy; do
+    if systemctl list-unit-files "${service}.service" >/dev/null 2>&1; then
+      sudo systemctl stop "$service" 2>/dev/null || true
+      sudo systemctl disable "$service" 2>/dev/null || true
+    fi
+  done
   sudo systemctl enable nginx
-  sudo systemctl restart nginx
+  if ! sudo systemctl restart nginx; then
+    sudo ss -ltnp '( sport = :80 or sport = :443 )' || true
+    sudo systemctl --no-pager --full status nginx || true
+    exit 1
+  fi
   sudo certbot certonly --webroot --webroot-path /var/www/html --non-interactive --agree-tos --register-unsafely-without-email -d "${SERVER_NAME}"
 fi
 
