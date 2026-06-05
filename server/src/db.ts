@@ -98,12 +98,15 @@ function migrate(db: Database.Database) {
 }
 
 function seedUser(db: Database.Database) {
-  const email = process.env.SEED_USER_EMAIL || process.env.WEALTHTRACK_USER_EMAIL || "demo@example.com";
-  const password = process.env.SEED_USER_PASSWORD || process.env.WEALTHTRACK_USER_PASSWORD || "change-me";
-  const passwordHash = bcrypt.hashSync(password, 12);
+  const explicitEmail = process.env.SEED_USER_EMAIL || process.env.WEALTHTRACK_USER_EMAIL;
+  const explicitPassword = process.env.SEED_USER_PASSWORD || process.env.WEALTHTRACK_USER_PASSWORD;
+  const email = explicitEmail || "demo@example.com";
+  const password = explicitPassword || "change-me";
   const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: number } | undefined;
   if (existing) {
-    db.prepare("UPDATE users SET passwordHash = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?").run(passwordHash, existing.id);
+    if (explicitPassword) {
+      db.prepare("UPDATE users SET passwordHash = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?").run(bcrypt.hashSync(explicitPassword, 12), existing.id);
+    }
     db.prepare(`
       INSERT INTO profiles (userId, name, defaultCurrency) VALUES (?, ?, ?)
       ON CONFLICT(userId) DO UPDATE SET name = excluded.name, updatedAt = CURRENT_TIMESTAMP
@@ -112,13 +115,17 @@ function seedUser(db: Database.Database) {
   }
   const users = db.prepare("SELECT id FROM users ORDER BY id").all() as Array<{ id: number }>;
   if (users.length === 1) {
-    db.prepare("UPDATE users SET email = ?, passwordHash = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?").run(email, passwordHash, users[0].id);
+    if (explicitPassword) {
+      db.prepare("UPDATE users SET email = ?, passwordHash = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?").run(email, bcrypt.hashSync(explicitPassword, 12), users[0].id);
+    } else {
+      db.prepare("UPDATE users SET email = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?").run(email, users[0].id);
+    }
     db.prepare(`
       INSERT INTO profiles (userId, name, defaultCurrency) VALUES (?, ?, ?)
       ON CONFLICT(userId) DO UPDATE SET name = excluded.name, updatedAt = CURRENT_TIMESTAMP
     `).run(users[0].id, "Keith Stephens", "GBP");
     return;
   }
-  const info = db.prepare("INSERT INTO users (email, passwordHash) VALUES (?, ?)").run(email, passwordHash);
+  const info = db.prepare("INSERT INTO users (email, passwordHash) VALUES (?, ?)").run(email, bcrypt.hashSync(password, 12));
   db.prepare("INSERT INTO profiles (userId, name, defaultCurrency) VALUES (?, ?, ?)").run(info.lastInsertRowid, "Keith Stephens", "GBP");
 }

@@ -39,7 +39,9 @@ if [[ -n "${VM_SSH_KEY:-}" && -n "${VM_SSH_USER:-}" && -n "${VM_HOST:-}" ]]; the
     scp "${SSH_OPTS[@]}" "$1" "$SSH_TARGET:$2"
   }
   cleanup_ssh_key() {
-    [[ "${ssh_key_path:-}" != "${VM_SSH_KEY:-}" ]] && rm -f "$ssh_key_path"
+    if [[ "${ssh_key_path:-}" != "${VM_SSH_KEY:-}" ]]; then
+      rm -f "$ssh_key_path"
+    fi
   }
 elif [[ -n "${GCE_INSTANCE:-}" ]]; then
   : "${GCP_PROJECT_ID:?Missing GCP_PROJECT_ID}"

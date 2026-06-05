@@ -12,7 +12,9 @@ source "$env_file"
 set +a
 
 cleanup() {
-  [[ -n "${tmp_gcloud_config:-}" ]] && rm -rf "$tmp_gcloud_config"
+  if [[ -n "${tmp_gcloud_config:-}" ]]; then
+    rm -rf "$tmp_gcloud_config"
+  fi
 }
 trap cleanup EXIT
 
