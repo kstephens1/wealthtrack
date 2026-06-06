@@ -53,6 +53,11 @@ export function monthlyChange(points: Array<{ date: string; netWorth: number }>)
   return { change, percentChange: previous === 0 ? null : change / Math.abs(previous) };
 }
 
+export function movement(current: number, previous: number, invert = false) {
+  const change = invert ? previous - current : current - previous;
+  return { change, percentChange: previous === 0 ? null : change / Math.abs(previous) };
+}
+
 export type NetWorthSeriesRow = {
   accountId: number;
   kind: string;
@@ -117,6 +122,69 @@ export function buildProjectedNetWorthSeries(rows: NetWorthSeriesRow[], retireme
   });
 }
 
+export type TargetForecast = {
+  targetValue: number;
+  targetDate: string | null;
+  previousTargetDate: string | null;
+  monthDelta: number | null;
+  dayDelta: number | null;
+  status: "already_reached" | "projected" | "not_projected" | "insufficient_data";
+};
+
+export function buildTargetForecast(
+  historicalSeries: Array<{ date: string; netWorth: number }>,
+  projectedSeries: Array<{ date: string; predictedNetWorth: number }>,
+  targetValue: number
+): TargetForecast {
+  const sortedHistorical = [...historicalSeries].sort((a, b) => a.date.localeCompare(b.date));
+  if (!sortedHistorical.length || !Number.isFinite(targetValue) || targetValue <= 0) {
+    return { targetValue, targetDate: null, previousTargetDate: null, monthDelta: null, dayDelta: null, status: "insufficient_data" };
+  }
+
+  const latest = sortedHistorical[sortedHistorical.length - 1];
+  const previous = sortedHistorical.length > 1 ? sortedHistorical[sortedHistorical.length - 2] : null;
+  const sortedProjected = [...projectedSeries].sort((a, b) => a.date.localeCompare(b.date));
+  const targetDate = estimateTargetDate(
+    [{ date: latest.date, value: latest.netWorth }, ...sortedProjected.map((point) => ({ date: point.date, value: point.predictedNetWorth }))],
+    targetValue
+  );
+  const previousTargetDate = previous ? estimateTargetDate(
+    [{ date: previous.date, value: previous.netWorth }, ...sortedProjected.map((point) => ({ date: point.date, value: point.predictedNetWorth }))],
+    targetValue
+  ) : null;
+
+  return {
+    targetValue,
+    targetDate,
+    previousTargetDate,
+    monthDelta: targetDate && previousTargetDate ? monthsBetween(previousTargetDate, targetDate) : null,
+    dayDelta: targetDate && previousTargetDate ? Math.round(daysBetween(previousTargetDate, targetDate)) : null,
+    status: latest.netWorth >= targetValue ? "already_reached" : targetDate ? "projected" : "not_projected"
+  };
+}
+
+function estimateTargetDate(points: Array<{ date: string; value: number }>, targetValue: number) {
+  const sorted = dedupePoints(points).sort((a, b) => a.date.localeCompare(b.date));
+  if (!sorted.length) return null;
+  if (sorted[0].value >= targetValue) return sorted[0].date;
+  for (let index = 1; index < sorted.length; index += 1) {
+    const previous = sorted[index - 1];
+    const current = sorted[index];
+    if (current.value < targetValue || current.value === previous.value) continue;
+    const ratio = (targetValue - previous.value) / (current.value - previous.value);
+    return addDays(previous.date, Math.max(0, Math.round(daysBetween(previous.date, current.date) * ratio)));
+  }
+  return null;
+}
+
+function dedupePoints(points: Array<{ date: string; value: number }>) {
+  const byDate = new Map<string, { date: string; value: number }>();
+  for (const point of points) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(point.date) && Number.isFinite(point.value)) byDate.set(point.date, point);
+  }
+  return Array.from(byDate.values());
+}
+
 function projectedAnnualRate(first: NetWorthSeriesRow, latest: NetWorthSeriesRow) {
   const start = Math.max(0, Number(first.value));
   const end = Math.max(0, Number(latest.value));
@@ -142,6 +210,16 @@ function forecastDates(startDate: string, retirementDate: string) {
 
 function daysBetween(startDate: string, endDate: string) {
   return (new Date(`${endDate}T00:00:00`).getTime() - new Date(`${startDate}T00:00:00`).getTime()) / 86400000;
+}
+
+function monthsBetween(startDate: string, endDate: string) {
+  return Math.round(daysBetween(startDate, endDate) / 30.4375);
+}
+
+function addDays(dateString: string, days: number) {
+  const date = new Date(`${dateString}T00:00:00`);
+  date.setDate(date.getDate() + days);
+  return toDateString(date);
 }
 
 function toDateString(date: Date) {

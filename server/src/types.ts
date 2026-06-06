@@ -10,6 +10,9 @@ export interface Account {
   updateFrequency: string;
   tagsJson: string;
   notes: string | null;
+  thumbnailFileName?: string | null;
+  thumbnailMimeType?: string | null;
+  thumbnailUpdatedAt?: string | null;
   isArchived: number;
   createdAt: string;
   updatedAt: string;

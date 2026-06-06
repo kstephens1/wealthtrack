@@ -2,9 +2,11 @@ import bcrypt from "bcryptjs";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express, { Request, Response, NextFunction } from "express";
+import fs from "fs";
 import jwt from "jsonwebtoken";
+import path from "path";
 import { z } from "zod";
-import { allocation, buildNetWorthSeries, buildProjectedNetWorthSeries, monthlyChange, netWorth, staleAccounts, twoPointComparison } from "./calculations";
+import { allocation, buildNetWorthSeries, buildProjectedNetWorthSeries, buildTargetForecast, monthlyChange, movement, netWorth, staleAccounts, twoPointComparison } from "./calculations";
 import { initializeDatabase, openDatabase } from "./db";
 import { Account, AccountWithLatest, ValueEntry } from "./types";
 
@@ -21,8 +23,16 @@ const accountSchema = z.object({
 });
 const valueSchema = z.object({ value: z.number().nonnegative(), valueDate: z.string(), note: z.string().optional().nullable(), source: z.string().default("manual") });
 const profileSchema = z.object({
-  retirementDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional()
+  retirementDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  targetFinancialGoal: z.number().positive().optional()
 });
+const imageUploadSchema = z.object({ imageDataUrl: z.string().min(1) });
+const imageMimeExtensions: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/webp": "webp"
+};
+const maxImageBytes = 512 * 1024;
 
 export function createApp(db = openDatabase()) {
   initializeDatabase(db);
@@ -91,9 +101,16 @@ export function createApp(db = openDatabase()) {
     const parsed = profileSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     const userId = (req as any).user.id;
+    const existing = db.prepare("SELECT retirementDate, targetFinancialGoal FROM profiles WHERE userId = ?").get(userId) as { retirementDate: string | null; targetFinancialGoal: number } | undefined;
+    const nextRetirementDate = Object.prototype.hasOwnProperty.call(parsed.data, "retirementDate") ? parsed.data.retirementDate ?? null : existing?.retirementDate ?? null;
+    const nextTargetFinancialGoal = parsed.data.targetFinancialGoal ?? existing?.targetFinancialGoal ?? 1000000;
     db.prepare(`
-      UPDATE profiles SET retirementDate = ?, updatedAt = CURRENT_TIMESTAMP WHERE userId = ?
-    `).run(parsed.data.retirementDate ?? null, userId);
+      UPDATE profiles
+      SET retirementDate = ?,
+        targetFinancialGoal = ?,
+        updatedAt = CURRENT_TIMESTAMP
+      WHERE userId = ?
+    `).run(nextRetirementDate, nextTargetFinancialGoal, userId);
     res.json({ profile: db.prepare("SELECT * FROM profiles WHERE userId = ?").get(userId) });
   });
 
@@ -144,17 +161,53 @@ export function createApp(db = openDatabase()) {
     return buildProjectedNetWorthSeries(netWorthRows(userId), retirementDate);
   }
 
+  function accountImageDir() {
+    return process.env.ACCOUNT_IMAGE_DIR || path.join(process.cwd(), "server/data/account-images");
+  }
+
+  function accountImagePath(account: Pick<Account, "id" | "thumbnailFileName">) {
+    return account.thumbnailFileName ? path.join(accountImageDir(), account.thumbnailFileName) : null;
+  }
+
+  function parseImageDataUrl(imageDataUrl: string) {
+    const match = imageDataUrl.match(/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/);
+    if (!match) return null;
+    const mimeType = match[1];
+    const extension = imageMimeExtensions[mimeType];
+    if (!extension) return null;
+    const bytes = Buffer.from(match[2], "base64");
+    if (!bytes.length || bytes.length > maxImageBytes) return null;
+    return { mimeType, extension, bytes };
+  }
+
   app.get("/api/dashboard", requireAuth, (req, res) => {
     const userId = (req as any).user.id;
     const accounts = latestAccounts(userId);
     const series = netWorthSeries(userId);
-    const profile = db.prepare("SELECT retirementDate FROM profiles WHERE userId = ?").get(userId) as { retirementDate: string | null } | undefined;
+    const rows = netWorthRows(userId);
+    const profile = db.prepare("SELECT retirementDate, targetFinancialGoal FROM profiles WHERE userId = ?").get(userId) as { retirementDate: string | null; targetFinancialGoal: number | null } | undefined;
     const retirementDate = profile?.retirementDate ?? null;
+    const targetFinancialGoal = Number(profile?.targetFinancialGoal ?? 1000000);
+    const projectedSeries = buildProjectedNetWorthSeries(rows, retirementDate);
     const active = accounts.filter((account) => !account.isArchived);
     const totalAssets = active.filter((account) => account.kind === "asset").reduce((sum, account) => sum + Number(account.latestValue ?? 0), 0);
     const totalLiabilities = active.filter((account) => account.kind === "liability").reduce((sum, account) => sum + Math.abs(Number(account.latestValue ?? 0)), 0);
+    const previousAssets = active.filter((account) => account.kind === "asset").reduce((sum, account) => sum + Number(account.previousValue ?? account.latestValue ?? 0), 0);
+    const previousLiabilities = active.filter((account) => account.kind === "liability").reduce((sum, account) => sum + Math.abs(Number(account.previousValue ?? account.latestValue ?? 0)), 0);
+    const netWorthMovement = monthlyChange(series);
     res.json({
-      totals: { netWorth: netWorth(accounts), assets: totalAssets, liabilities: totalLiabilities, monthlyChange: monthlyChange(series) },
+      totals: {
+        netWorth: netWorth(accounts),
+        assets: totalAssets,
+        liabilities: totalLiabilities,
+        monthlyChange: netWorthMovement,
+        movements: {
+          netWorth: netWorthMovement,
+          assets: movement(totalAssets, previousAssets),
+          liabilities: movement(totalLiabilities, previousLiabilities, true),
+          latestChange: netWorthMovement
+        }
+      },
       accounts,
       allocation: allocation(accounts),
       staleAccounts: staleAccounts(accounts),
@@ -162,7 +215,9 @@ export function createApp(db = openDatabase()) {
       series,
       projection: {
         retirementDate,
-        series: projectedNetWorthSeries(userId, retirementDate)
+        targetFinancialGoal,
+        targetForecast: buildTargetForecast(series, projectedSeries, targetFinancialGoal),
+        series: projectedSeries
       }
     });
   });
@@ -205,6 +260,43 @@ export function createApp(db = openDatabase()) {
     if (!assertAccount(db, Number(req.params.id), (req as any).user.id, res)) return;
     db.prepare("UPDATE accounts SET isArchived = 1, updatedAt = CURRENT_TIMESTAMP WHERE id = ?").run(Number(req.params.id));
     res.json({ ok: true });
+  });
+
+  app.get("/api/accounts/:id/image", requireAuth, (req, res) => {
+    const account = assertAccount(db, Number(req.params.id), (req as any).user.id, res);
+    if (!account) return;
+    const filePath = accountImagePath(account);
+    if (!filePath || !account.thumbnailMimeType || !fs.existsSync(filePath)) return res.status(404).json({ error: "Image not found" });
+    res.type(account.thumbnailMimeType);
+    res.sendFile(filePath);
+  });
+
+  app.put("/api/accounts/:id/image", requireAuth, (req, res) => {
+    const account = assertAccount(db, Number(req.params.id), (req as any).user.id, res);
+    if (!account) return;
+    const parsed = imageUploadSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "Invalid image payload" });
+    const image = parseImageDataUrl(parsed.data.imageDataUrl);
+    if (!image) return res.status(400).json({ error: "Image must be PNG, JPEG, or WebP and no larger than 512KB" });
+    fs.mkdirSync(accountImageDir(), { recursive: true });
+    const nextFileName = `${account.id}.${image.extension}`;
+    const oldFilePath = accountImagePath(account);
+    if (oldFilePath && oldFilePath !== path.join(accountImageDir(), nextFileName) && fs.existsSync(oldFilePath)) fs.unlinkSync(oldFilePath);
+    const nextFilePath = path.join(accountImageDir(), nextFileName);
+    fs.writeFileSync(nextFilePath, image.bytes);
+    const updatedAt = new Date().toISOString();
+    db.prepare("UPDATE accounts SET thumbnailFileName=?, thumbnailMimeType=?, thumbnailUpdatedAt=?, updatedAt=CURRENT_TIMESTAMP WHERE id=?")
+      .run(nextFileName, image.mimeType, updatedAt, account.id);
+    res.json({ account: latestAccounts((req as any).user.id).find((item) => item.id === account.id) });
+  });
+
+  app.delete("/api/accounts/:id/image", requireAuth, (req, res) => {
+    const account = assertAccount(db, Number(req.params.id), (req as any).user.id, res);
+    if (!account) return;
+    const filePath = accountImagePath(account);
+    if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    db.prepare("UPDATE accounts SET thumbnailFileName=NULL, thumbnailMimeType=NULL, thumbnailUpdatedAt=NULL, updatedAt=CURRENT_TIMESTAMP WHERE id=?").run(account.id);
+    res.json({ account: latestAccounts((req as any).user.id).find((item) => item.id === account.id) });
   });
 
   app.get("/api/accounts/:id/values", requireAuth, (req, res) => {
@@ -302,7 +394,10 @@ export function createApp(db = openDatabase()) {
     const userId = (req as any).user.id;
     res.json({
       exportedAt: new Date().toISOString(),
-      accounts: db.prepare("SELECT * FROM accounts WHERE userId = ?").all(userId),
+      accounts: (db.prepare("SELECT * FROM accounts WHERE userId = ?").all(userId) as any[]).map((account) => {
+        const { thumbnailFileName, thumbnailMimeType, thumbnailUpdatedAt, ...exportedAccount } = account;
+        return exportedAccount;
+      }),
       values: db.prepare("SELECT v.* FROM value_entries v JOIN accounts a ON a.id = v.accountId WHERE a.userId = ?").all(userId),
       goals: db.prepare("SELECT * FROM goals WHERE userId = ?").all(userId),
       monthlyReviews: db.prepare("SELECT * FROM monthly_reviews WHERE userId = ?").all(userId)

@@ -34,6 +34,9 @@ main { min-width: 0; }
 .metric { padding: 1rem; display: grid; gap: 0.4rem; min-height: 6rem; background: #191919; }
 .metric span, .page-header span { color: var(--muted); }
 .metric strong { font-size: 1.65rem; line-height: 1.1; overflow-wrap: anywhere; color: #fff; }
+.metric small { font-weight: 700; overflow-wrap: anywhere; }
+.metric small.positive { color: var(--accent); }
+.metric small.negative { color: #ff6b6b; }
 .chart-row { display: grid; grid-template-columns: 1.4fr 1fr; gap: 0.8rem; }
 .panel { padding: 1rem; min-width: 0; }
 .panel h2 { margin: 0 0 0.8rem; font-size: 1.15rem; color: #fff; }
@@ -43,8 +46,14 @@ main { min-width: 0; }
 .range-controls button { min-height: 2rem; min-width: 3rem; padding: 0 0.6rem; border-color: transparent; background: transparent; color: #fff; }
 .range-controls button.active { border-color: transparent; background: #343434; color: #fff; font-weight: 700; }
 .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.8rem; }
+.insight-stack { display: grid; gap: 0.8rem; max-width: 860px; }
 .card { padding: 1rem; display: grid; gap: 0.5rem; background: #202020; }
 .card h3, .card p { margin: 0; }
+.target-goal-card { gap: 0.45rem; }
+.target-day-delta { display: block; font-size: 1.1rem; font-weight: 800; line-height: 1.2; }
+.target-day-delta.positive { color: var(--accent); }
+.target-day-delta.negative { color: #ff6b6b; }
+.target-day-delta.neutral { color: var(--muted); }
 .section-title-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .section-title-row h2 { margin: 0; font-size: 1.35rem; color: #fff; }
 .section-title-row span { color: var(--muted); }
@@ -88,7 +97,7 @@ main { min-width: 0; }
 .account-summary-list { display: grid; gap: 0.7rem; }
 .account-summary-card {
   display: grid;
-  grid-template-columns: 76px minmax(0, 1fr) minmax(130px, auto);
+  grid-template-columns: 76px 68px minmax(0, 1fr) minmax(130px, auto);
   gap: 0.8rem;
   align-items: center;
   justify-content: stretch;
@@ -101,6 +110,11 @@ main { min-width: 0; }
 }
 .account-summary-card:hover { background: #252525; }
 .account-sparkline { width: 68px; height: 54px; overflow: visible; }
+.account-thumbnail { display: block; object-fit: cover; background: #151515; border: 1px solid #303030; border-radius: 6px; }
+.account-thumbnail.summary { width: 68px; height: 54px; }
+.account-thumbnail.table { width: 48px; height: 40px; }
+.account-thumbnail.detail { width: 160px; height: 120px; }
+.account-thumbnail.placeholder { background: linear-gradient(135deg, #171717, #262626); }
 .spark-fill { opacity: 0.18; }
 .spark-fill.positive { fill: var(--accent); }
 .spark-fill.negative { fill: #ff6b6b; }
@@ -127,7 +141,8 @@ tr.selected { background: #172817; }
 .inline-form { display: grid; grid-template-columns: repeat(6, minmax(120px, 1fr)); gap: 0.6rem; align-items: end; }
 .review-list, .settings-grid { display: grid; gap: 0.75rem; max-width: 860px; }
 .review-list label { display: grid; grid-template-columns: 1fr 130px 180px; gap: 0.75rem; align-items: center; padding: 0.6rem; background: #1f1f1f; border: 1px solid var(--line); border-radius: 8px; }
-.settings-form { display: grid; grid-template-columns: minmax(220px, 1fr) auto; gap: 0.75rem; align-items: end; }
+.settings-form { display: grid; grid-template-columns: repeat(2, minmax(220px, 1fr)) auto; gap: 0.75rem; align-items: end; }
+.account-image-panel { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 1rem; align-items: center; }
 .data-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; }
 .file-button { display: inline-flex; align-items: center; justify-content: center; gap: 0.45rem; min-height: 2.35rem; border: 1px solid var(--line); border-radius: 8px; background: #242424; color: var(--ink); cursor: pointer; padding: 0 0.8rem; }
 .file-button:hover { border-color: var(--accent); }
@@ -153,13 +168,16 @@ textarea { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace
   .sidebar-backdrop { display: block; position: fixed; inset: 0; z-index: 30; min-height: 0; border: 0; border-radius: 0; background: rgba(0,0,0,0.55); }
   .brand { padding-right: 3rem; }
   .metric-grid, .chart-row, .inline-form { grid-template-columns: 1fr; }
-  .account-summary-card { grid-template-columns: 48px minmax(0, 1fr); column-gap: 0.55rem; }
+  .account-summary-card { grid-template-columns: 48px 48px minmax(0, 1fr); column-gap: 0.55rem; }
   .account-sparkline { width: 48px; height: 42px; }
-  .account-summary-value { grid-column: 2; justify-items: start; }
+  .account-thumbnail.summary { width: 48px; height: 42px; }
+  .account-summary-value { grid-column: 3; justify-items: start; }
   .account-summary-main strong { font-size: 1.1rem; }
   .section-title-row { align-items: flex-start; }
   .section-actions { flex-wrap: wrap; }
   .option-picker { right: auto; left: 0; min-width: min(18rem, 88vw); }
   .panel-title-row { align-items: flex-start; flex-direction: column; }
   .review-list label { grid-template-columns: 1fr; }
+  .settings-form { grid-template-columns: 1fr; }
+  .account-image-panel { grid-template-columns: 1fr; }
 }

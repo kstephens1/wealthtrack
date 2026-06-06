@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allocation, buildNetWorthSeries, buildProjectedNetWorthSeries, monthlyChange, netWorth, staleAccounts, twoPointComparison } from "../src/calculations";
+import { allocation, buildNetWorthSeries, buildProjectedNetWorthSeries, buildTargetForecast, monthlyChange, netWorth, staleAccounts, twoPointComparison } from "../src/calculations";
 
 const base = { userId: 1, currency: "GBP", updateFrequency: "monthly", tagsJson: "[]", notes: null, isArchived: 0, createdAt: "", updatedAt: "" };
 
@@ -67,5 +67,52 @@ describe("wealth calculations", () => {
     expect(series[0]).toEqual({ date: "2026-06-01", predictedNetWorth: 650 });
     expect(series[series.length - 1].date).toBe("2027-06-01");
     expect(series[series.length - 1].predictedNetWorth).toBeGreaterThan(650);
+  });
+
+  it("estimates the target date from the prediction series", () => {
+    const forecast = buildTargetForecast(
+      [{ date: "2026-05-01", netWorth: 900 }, { date: "2026-06-01", netWorth: 1000 }],
+      [{ date: "2026-07-01", predictedNetWorth: 1100 }, { date: "2026-08-01", predictedNetWorth: 1200 }],
+      1150
+    );
+
+    expect(forecast.status).toBe("projected");
+    expect(forecast.targetDate).toBe("2026-07-16");
+    expect(forecast.previousTargetDate).toBe("2026-07-16");
+    expect(forecast.monthDelta).toBe(0);
+    expect(forecast.dayDelta).toBe(0);
+  });
+
+  it("marks a target reached on the latest actual date", () => {
+    const forecast = buildTargetForecast(
+      [{ date: "2026-05-01", netWorth: 900 }, { date: "2026-06-01", netWorth: 1000 }],
+      [{ date: "2026-07-01", predictedNetWorth: 1100 }],
+      950
+    );
+
+    expect(forecast).toMatchObject({ status: "already_reached", targetDate: "2026-06-01" });
+  });
+
+  it("reports target month delta against the previous actual value estimate", () => {
+    const forecast = buildTargetForecast(
+      [{ date: "2026-05-01", netWorth: 500 }, { date: "2026-06-01", netWorth: 1000 }],
+      [{ date: "2026-09-01", predictedNetWorth: 1200 }],
+      1100
+    );
+
+    expect(forecast.targetDate).toBe("2026-07-16");
+    expect(forecast.previousTargetDate).toBe("2026-08-13");
+    expect(forecast.monthDelta).toBe(-1);
+    expect(forecast.dayDelta).toBe(-28);
+  });
+
+  it("returns not projected when the forecast does not reach the target", () => {
+    const forecast = buildTargetForecast(
+      [{ date: "2026-06-01", netWorth: 1000 }],
+      [{ date: "2026-07-01", predictedNetWorth: 1050 }],
+      2000
+    );
+
+    expect(forecast).toMatchObject({ status: "not_projected", targetDate: null, monthDelta: null, dayDelta: null });
   });
 });

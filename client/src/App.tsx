@@ -1,7 +1,7 @@
 import { Archive, ArrowDownAZ, ArrowDownWideNarrow, BarChart3, Calendar, Check, Clock, Eye, EyeOff, FileDown, FileUp, Gauge, LineChart, LogOut, Menu, Percent, Plus, Save, Settings as SettingsIcon, Tag, Target, Trash2, TrendingUp, X } from "lucide-react";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart as RLineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Account, api, AUTH_INVALID_EVENT, Dashboard, money, ValueEntry } from "./lib/api";
+import { Account, api, API_BASE, AUTH_INVALID_EVENT, Dashboard, money, ValueEntry } from "./lib/api";
 
 type View = "dashboard" | "accounts" | "review" | "goals" | "insights" | "settings";
 type ChartRange = "all" | "6m" | "1y" | "2y" | "4y" | "8y";
@@ -38,6 +38,7 @@ const sortOptions: Array<{ key: SortOption; label: string; icon: typeof Gauge }>
 ];
 const dashboardComparisonStorageKey = "wealthtrack_dashboard_comparison";
 const dashboardSortStorageKey = "wealthtrack_dashboard_sort";
+const hiddenDashboardStaleAccountNames = new Set(["kcc lump sum", "rdg lump sum"]);
 const comparisonOptionKeys = new Set(comparisonOptions.map((option) => option.key));
 const sortOptionKeys = new Set(sortOptions.map((option) => option.key));
 
@@ -113,7 +114,7 @@ export default function App() {
         {view === "accounts" && (selectedAccount ? <AccountDetail account={selectedAccount} hidden={privacy} onBack={() => setSelectedAccount(null)} /> : <AccountsView hidden={privacy} onOpen={setSelectedAccount} />)}
         {view === "review" && <MonthlyReview hidden={privacy} />}
         {view === "goals" && <Goals hidden={privacy} />}
-        {view === "insights" && <Insights />}
+        {view === "insights" && <Insights hidden={privacy} />}
         {view === "settings" && <Settings />}
       </main>
     </div>
@@ -162,7 +163,7 @@ function useDashboard() {
 
 function DashboardView({ hidden, onOpenAccount }: { hidden: boolean; onOpenAccount: (account: Account) => void }) {
   const { dashboard } = useDashboard();
-  const [chartRange, setChartRange] = useState<ChartRange>("all");
+  const [chartRange, setChartRange] = useState<ChartRange>("1y");
   if (!dashboard) return <div className="page">Loading...</div>;
   const historicalChartData = dashboard.series.map((point) => ({
     date: point.date,
@@ -170,7 +171,7 @@ function DashboardView({ hidden, onOpenAccount }: { hidden: boolean; onOpenAccou
     predictedNetWorth: null as number | null,
     timestamp: new Date(`${point.date}T00:00:00`).getTime()
   })).filter((point) => Number.isFinite(point.timestamp));
-  const projectedChartData = dashboard.projection.series.map((point) => ({
+  const rawProjectedChartData = dashboard.projection.series.map((point) => ({
     date: point.date,
     netWorth: null as number | null,
     predictedNetWorth: point.predictedNetWorth,
@@ -179,14 +180,21 @@ function DashboardView({ hidden, onOpenAccount }: { hidden: boolean; onOpenAccou
   const latestTimestamp = historicalChartData.length ? Math.max(...historicalChartData.map((point) => point.timestamp)) : Date.now();
   const selectedRange = chartRanges.find((range) => range.key === chartRange) ?? chartRanges[0];
   const rangeStart = selectedRange.months === null ? null : subtractMonths(latestTimestamp, selectedRange.months);
+  const rangeEnd = selectedRange.months === null ? null : addMonths(latestTimestamp, selectedRange.months);
   const filteredHistoricalData = rangeStart === null ? historicalChartData : historicalChartData.filter((point) => point.timestamp >= rangeStart);
+  const filteredProjectedData = rangeEnd === null ? rawProjectedChartData : rawProjectedChartData.filter((point) => point.timestamp <= rangeEnd);
+  const projectedChartData = filteredProjectedData.length ? filteredProjectedData : rawProjectedChartData.slice(0, 1);
   const visibleChartData = mergeChartSeries(filteredHistoricalData.length ? filteredHistoricalData : historicalChartData.slice(-1), projectedChartData);
+  const predictionLabel = formatPredictionLabel(rawProjectedChartData);
   const dataMin = visibleChartData.length ? Math.min(...visibleChartData.map((point) => point.timestamp)) : latestTimestamp;
   const dataMax = visibleChartData.length ? Math.max(...visibleChartData.map((point) => point.timestamp)) : latestTimestamp;
   const xDomain = paddedDateDomain(dataMin, dataMax);
+  const forecast = dashboard.projection.targetForecast;
+  const homeAccounts = dashboard.accounts.filter((account) => !account.isArchived);
+  const visibleStaleAccounts = dashboard.staleAccounts.filter((account) => !isHiddenDashboardStaleAccount(account));
   return (
     <section className="page">
-      <header className="page-header"><h1>Dashboard</h1><span>{dashboard.accounts.filter((account) => !account.isArchived).length} active accounts</span></header>
+      <header className="page-header"><h1>Dashboard</h1><span>{homeAccounts.length} active accounts</span></header>
       <div className="chart-row">
         <section className="panel wide">
           <div className="panel-title-row">
@@ -217,7 +225,7 @@ function DashboardView({ hidden, onOpenAccount }: { hidden: boolean; onOpenAccou
               />
               <Legend />
               <Line name="Net worth" type="monotone" dataKey="netWorth" stroke={chartGreen} strokeWidth={3} dot={false} activeDot={{ r: 4, fill: chartGreen }} connectNulls={false} />
-              <Line name="Prediction" type="monotone" dataKey="predictedNetWorth" stroke={chartPrediction} strokeWidth={3} strokeDasharray="7 5" dot={false} activeDot={{ r: 4, fill: chartPrediction }} connectNulls={false} />
+              <Line name={predictionLabel} type="monotone" dataKey="predictedNetWorth" stroke={chartPrediction} strokeWidth={3} strokeDasharray="7 5" dot={false} activeDot={{ r: 4, fill: chartPrediction }} connectNulls={false} />
             </RLineChart>
           </ResponsiveContainer>
         </section>
@@ -229,18 +237,23 @@ function DashboardView({ hidden, onOpenAccount }: { hidden: boolean; onOpenAccou
         </section>
       </div>
       <div className="metric-grid">
-        <Metric label="Net worth" value={money(dashboard.totals.netWorth, "GBP", hidden)} />
-        <Metric label="Assets" value={money(dashboard.totals.assets, "GBP", hidden)} />
-        <Metric label="Liabilities" value={money(dashboard.totals.liabilities, "GBP", hidden)} />
-        <Metric label="Latest change" value={money(dashboard.totals.monthlyChange.change, "GBP", hidden)} />
+        <Metric label="Net worth" value={money(dashboard.totals.netWorth, "GBP", hidden)} detail={formatMovement(dashboard.totals.movements?.netWorth ?? dashboard.totals.monthlyChange, "GBP", hidden)} />
+        <Metric label="Assets" value={money(dashboard.totals.assets, "GBP", hidden)} detail={formatMovement(dashboard.totals.movements?.assets ?? { change: 0, percentChange: null }, "GBP", hidden)} />
+        <Metric label="Liabilities" value={money(dashboard.totals.liabilities, "GBP", hidden)} detail={formatMovement(dashboard.totals.movements?.liabilities ?? { change: 0, percentChange: null }, "GBP", hidden)} />
+        <Metric label="Latest change" value={signedMoney(dashboard.totals.monthlyChange.change, "GBP", hidden)} detail={formatMovement(dashboard.totals.movements?.latestChange ?? dashboard.totals.monthlyChange, "GBP", hidden)} />
       </div>
-      <AccountSummaryList accounts={dashboard.accounts.filter((account) => !account.isArchived)} hidden={hidden} onOpen={onOpenAccount} />
+      <AccountSummaryList accounts={homeAccounts} hidden={hidden} onOpen={onOpenAccount} />
       <div className="card-grid">
+        {forecast && <TargetForecastCard forecast={forecast} hidden={hidden} />}
         {dashboard.insights.map((insight) => <article className="card" key={insight.title}><h3>{insight.title}</h3><p>{insight.body}</p></article>)}
-        {dashboard.staleAccounts.map((account) => <article className="card warning" key={account.id}><h3>{account.name}</h3><p>Last updated {account.latestValueDate}</p></article>)}
+        {visibleStaleAccounts.map((account) => <article className="card warning" key={account.id}><h3>{account.name}</h3><p>Last updated {account.latestValueDate}</p></article>)}
       </div>
     </section>
   );
+}
+
+function isHiddenDashboardStaleAccount(account: Account) {
+  return hiddenDashboardStaleAccountNames.has(account.name.trim().toLowerCase());
 }
 
 function mergeChartSeries(
@@ -256,9 +269,27 @@ function mergeChartSeries(
   return Array.from(byDate.values()).sort((a, b) => a.timestamp - b.timestamp);
 }
 
+function formatPredictionLabel(projected: Array<{ timestamp: number; predictedNetWorth: number | null }>) {
+  const points = projected.filter((point): point is { timestamp: number; predictedNetWorth: number } => point.predictedNetWorth !== null && point.predictedNetWorth > 0).sort((a, b) => a.timestamp - b.timestamp);
+  if (points.length < 2) return "Prediction";
+  const first = points[0];
+  const last = points[points.length - 1];
+  const years = (last.timestamp - first.timestamp) / (365 * 24 * 60 * 60 * 1000);
+  if (years <= 0 || first.predictedNetWorth <= 0) return "Prediction";
+  const annualGrowth = Math.pow(last.predictedNetWorth / first.predictedNetWorth, 1 / years) - 1;
+  if (!Number.isFinite(annualGrowth)) return "Prediction";
+  return `Prediction (${Math.round(annualGrowth * 100)}%)`;
+}
+
 function subtractMonths(timestamp: number, months: number) {
   const date = new Date(timestamp);
   date.setMonth(date.getMonth() - months);
+  return date.getTime();
+}
+
+function addMonths(timestamp: number, months: number) {
+  const date = new Date(timestamp);
+  date.setMonth(date.getMonth() + months);
   return date.getTime();
 }
 
@@ -274,8 +305,9 @@ function formatChartDate(timestamp: number) {
   return new Intl.DateTimeFormat("en-GB", { year: "numeric", month: "short", day: "2-digit" }).format(new Date(timestamp));
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
-  return <div className="metric"><span>{label}</span><strong>{value}</strong></div>;
+function Metric({ label, value, detail }: { label: string; value: string; detail?: string }) {
+  const trendClass = detail?.startsWith("-") ? "negative" : "positive";
+  return <div className="metric"><span>{label}</span><strong>{value}</strong>{detail && <small className={trendClass}>{detail}</small>}</div>;
 }
 
 function AccountSummaryList({ accounts, hidden, onOpen }: { accounts: Account[]; hidden: boolean; onOpen: (account: Account) => void }) {
@@ -398,6 +430,7 @@ function AccountSummaryCard({ account, comparison, hidden, onOpen }: { account: 
   return (
     <button className="account-summary-card" onClick={() => onOpen(account)}>
       <AccountSparkline values={account.recentValues?.length ? account.recentValues : baseline === null ? [latest] : [baseline, latest]} positive={isPositive} />
+      <AccountThumbnail account={account} size="summary" />
       <span className="account-summary-main">
         <strong>{account.name}</strong>
         <span>{updatedLabel}{comparisonPoint.date && comparison !== "lastUpdate" ? ` • vs ${formatShortDate(comparisonPoint.date)}` : ""}</span>
@@ -408,6 +441,36 @@ function AccountSummaryCard({ account, comparison, hidden, onOpen }: { account: 
       </span>
     </button>
   );
+}
+
+function AccountThumbnail({ account, size }: { account: Account; size: "summary" | "table" | "detail" }) {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    let objectUrl: string | null = null;
+    if (!account.thumbnailFileName) {
+      setSrc(null);
+      return () => undefined;
+    }
+    const token = localStorage.getItem("wealthtrack_token");
+    fetch(`${API_BASE}/api/accounts/${account.id}/image?ts=${encodeURIComponent(account.thumbnailUpdatedAt ?? "")}`, {
+      credentials: "include",
+      headers: token ? { authorization: `Bearer ${token}` } : {}
+    })
+      .then((response) => response.ok ? response.blob() : null)
+      .then((blob) => {
+        if (!active || !blob) return;
+        objectUrl = URL.createObjectURL(blob);
+        setSrc(objectUrl);
+      })
+      .catch(() => { if (active) setSrc(null); });
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [account.id, account.thumbnailFileName, account.thumbnailUpdatedAt]);
+  if (!src) return <span className={`account-thumbnail ${size} placeholder`} aria-hidden="true" />;
+  return <img className={`account-thumbnail ${size}`} src={src} alt={`${account.name} thumbnail`} />;
 }
 
 function AccountSparkline({ values, positive }: { values: number[]; positive: boolean }) {
@@ -449,6 +512,46 @@ function formatAccountChange(change: number | null, percent: number | null, curr
   return `${percentLabel} ${direction}${amount}`;
 }
 
+function signedMoney(value: number, currency: string, hidden: boolean) {
+  if (hidden) return "••••••";
+  const direction = value >= 0 ? "+" : "-";
+  return `${direction}${money(Math.abs(value), currency, hidden)}`;
+}
+
+function formatMovement(change: { change: number; percentChange: number | null }, currency: string, hidden: boolean) {
+  const direction = change.change >= 0 ? "+" : "-";
+  const percentLabel = change.percentChange === null ? "from zero" : `${direction}${(Math.abs(change.percentChange) * 100).toFixed(1)}%`;
+  return `${percentLabel} ${signedMoney(change.change, currency, hidden)}`;
+}
+
+async function resizeImageFile(file: File, width: number, height: number) {
+  if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) throw new Error("Use a PNG, JPEG, or WebP image");
+  const sourceUrl = URL.createObjectURL(file);
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error("Could not read image"));
+      img.src = sourceUrl;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Could not prepare image");
+    const sourceRatio = image.width / image.height;
+    const targetRatio = width / height;
+    const sourceWidth = sourceRatio > targetRatio ? image.height * targetRatio : image.width;
+    const sourceHeight = sourceRatio > targetRatio ? image.height : image.width / targetRatio;
+    const sourceX = (image.width - sourceWidth) / 2;
+    const sourceY = (image.height - sourceHeight) / 2;
+    context.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, width, height);
+    return canvas.toDataURL(file.type === "image/png" ? "image/png" : file.type === "image/webp" ? "image/webp" : "image/jpeg", 0.86);
+  } finally {
+    URL.revokeObjectURL(sourceUrl);
+  }
+}
+
 function AccountsView({ hidden, onOpen }: { hidden: boolean; onOpen: (account: Account) => void }) {
   const { dashboard, reload } = useDashboard();
   const [filter, setFilter] = useState("active");
@@ -460,9 +563,10 @@ function AccountsView({ hidden, onOpen }: { hidden: boolean; onOpen: (account: A
       <AccountForm onSaved={reload} />
       <div className="table-wrap">
         <table>
-          <thead><tr><th>Name</th><th>Kind</th><th>Category</th><th>Latest value</th><th>Date</th><th></th></tr></thead>
+          <thead><tr><th>Image</th><th>Name</th><th>Kind</th><th>Category</th><th>Latest value</th><th>Date</th><th></th></tr></thead>
           <tbody>{accounts.map((account) => (
             <tr key={account.id}>
+              <td><AccountThumbnail account={account} size="table" /></td>
               <td><button className="link-button" onClick={() => onOpen(account)}>{account.name}</button></td>
               <td>{account.kind}</td><td>{account.category}</td><td>{money(Number(account.latestValue || 0), account.currency, hidden)}</td><td>{account.latestValueDate ? formatDisplayDate(account.latestValueDate) : "-"}</td>
               <td>{!account.isArchived && <button title="Archive account" onClick={async () => { await api(`/api/accounts/${account.id}/archive`, { method: "POST" }); reload(); }}><Archive size={16} /></button>}</td>
@@ -499,12 +603,16 @@ function AccountForm({ onSaved }: { onSaved: () => void }) {
 }
 
 function AccountDetail({ account, hidden, onBack }: { account: Account; hidden: boolean; onBack: () => void }) {
+  const [detailAccount, setDetailAccount] = useState(account);
   const [values, setValues] = useState<ValueEntry[]>([]);
   const [selected, setSelected] = useState<number[]>([]);
   const [chartRange, setChartRange] = useState<ChartRange>("all");
   const [entry, setEntry] = useState({ value: "", valueDate: new Date().toISOString().slice(0, 10), note: "" });
+  const [imageStatus, setImageStatus] = useState("");
   const load = () => api<{ values: ValueEntry[] }>(`/api/accounts/${account.id}/values`).then((result) => setValues(result.values));
   useEffect(() => {
+    setDetailAccount(account);
+    setImageStatus("");
     load();
   }, [account.id]);
   const chartData = values.map((value) => ({
@@ -534,9 +642,44 @@ function AccountDetail({ account, hidden, onBack }: { account: Account; hidden: 
     setEntry({ value: "", valueDate: entry.valueDate, note: "" });
     load();
   }
+  async function uploadAccountImage(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setImageStatus("");
+    try {
+      const imageDataUrl = await resizeImageFile(file, 256, 192);
+      const result = await api<{ account: Account }>(`/api/accounts/${account.id}/image`, { method: "PUT", body: JSON.stringify({ imageDataUrl }) });
+      setDetailAccount(result.account);
+      setImageStatus("Saved account image");
+    } catch (error) {
+      setImageStatus(error instanceof Error ? error.message : "Image upload failed");
+    } finally {
+      event.target.value = "";
+    }
+  }
+  async function deleteAccountImage() {
+    setImageStatus("");
+    const result = await api<{ account: Account }>(`/api/accounts/${account.id}/image`, { method: "DELETE" });
+    setDetailAccount(result.account);
+    setImageStatus("Deleted account image");
+  }
   return (
     <section className="page">
       <header className="page-header"><h1>{account.name}</h1><button onClick={onBack}>Back</button></header>
+      <section className="panel account-image-panel">
+        <AccountThumbnail account={detailAccount} size="detail" />
+        <div>
+          <h2>Account image</h2>
+          <div className="data-actions">
+            <label className="file-button">
+              <FileUp size={16} /> {detailAccount.thumbnailFileName ? "Replace image" : "Add image"}
+              <input type="file" accept="image/png,image/jpeg,image/webp" onChange={uploadAccountImage} />
+            </label>
+            {detailAccount.thumbnailFileName && <button onClick={deleteAccountImage}><Trash2 size={16} /> Delete image</button>}
+          </div>
+          {imageStatus && <p>{imageStatus}</p>}
+        </div>
+      </section>
       <form className="inline-form" onSubmit={addValue}>
         <input aria-label="Value" type="number" min="0" step="0.01" value={entry.value} onChange={(e) => setEntry({ ...entry, value: e.target.value })} required />
         <input aria-label="Date" type="date" value={entry.valueDate} onChange={(e) => setEntry({ ...entry, valueDate: e.target.value })} required />
@@ -637,30 +780,75 @@ function Goals({ hidden }: { hidden: boolean }) {
   );
 }
 
-function Insights() {
+function TargetForecastCards({ forecast, hidden }: { forecast: NonNullable<Dashboard["projection"]["targetForecast"]>; hidden: boolean }) {
+  return (
+    <div className="insight-stack">
+      <TargetForecastCard forecast={forecast} hidden={hidden} />
+    </div>
+  );
+}
+
+function TargetForecastCard({ forecast, hidden }: { forecast: NonNullable<Dashboard["projection"]["targetForecast"]>; hidden: boolean }) {
+  return <article className="card target-goal-card"><h3>Target financial goal</h3><p>{formatTargetForecast(forecast, hidden)}</p>{formatTargetDayDelta(forecast)}</article>;
+}
+
+function Insights({ hidden }: { hidden: boolean }) {
   const { dashboard } = useDashboard();
-  return <section className="page"><header className="page-header"><h1>Insights</h1></header><div className="card-grid">{dashboard?.insights.map((insight) => <article className="card" key={insight.title}><h3>{insight.title}</h3><p>{insight.body}</p></article>)}</div></section>;
+  const forecast = dashboard?.projection.targetForecast;
+  return (
+    <section className="page">
+      <header className="page-header"><h1>Insights</h1></header>
+      {forecast && <TargetForecastCards forecast={forecast} hidden={hidden} />}
+      <div className="card-grid">
+        {dashboard?.insights.map((insight) => <article className="card" key={insight.title}><h3>{insight.title}</h3><p>{insight.body}</p></article>)}
+      </div>
+    </section>
+  );
+}
+
+function formatTargetForecast(forecast: NonNullable<Dashboard["projection"]["targetForecast"]>, hidden: boolean) {
+  const target = money(forecast.targetValue, "GBP", hidden);
+  if (forecast.status === "already_reached" && forecast.targetDate) return `${target} reached on ${formatDisplayDate(forecast.targetDate)}.`;
+  if (forecast.status === "projected" && forecast.targetDate) return `${target} projected for ${formatDisplayDate(forecast.targetDate)}.`;
+  if (forecast.status === "insufficient_data") return `Add more net worth history to forecast ${target}.`;
+  return `${target} is not projected within the current prediction horizon.`;
+}
+
+function formatTargetDayDelta(forecast: NonNullable<Dashboard["projection"]["targetForecast"]>) {
+  const dayDelta = forecast.dayDelta ?? null;
+  if (dayDelta === null || !forecast.previousTargetDate || !forecast.targetDate) return <small className="target-day-delta neutral">Add another reading to compare timing</small>;
+  if (dayDelta === 0) return <small className="target-day-delta neutral">0 days from previous reading</small>;
+  const direction = dayDelta > 0 ? "+" : "-";
+  const timing = dayDelta > 0 ? "later" : "earlier";
+  const trendClass = dayDelta > 0 ? "negative" : "positive";
+  return <small className={`target-day-delta ${trendClass}`}>{direction}{Math.abs(dayDelta)} day{Math.abs(dayDelta) === 1 ? "" : "s"} {timing} than previous reading</small>;
 }
 
 function Settings() {
   const [status, setStatus] = useState("");
   const [retirementDate, setRetirementDate] = useState("");
+  const [targetFinancialGoal, setTargetFinancialGoal] = useState("1000000");
   useEffect(() => {
     let active = true;
-    api<{ profile: { retirementDate: string | null } }>("/api/auth/me")
-      .then((result) => { if (active) setRetirementDate(result.profile?.retirementDate ?? ""); })
+    api<{ profile: { retirementDate: string | null; targetFinancialGoal?: number | null } }>("/api/auth/me")
+      .then((result) => {
+        if (!active) return;
+        setRetirementDate(result.profile?.retirementDate ?? "");
+        setTargetFinancialGoal(String(result.profile?.targetFinancialGoal ?? 1000000));
+      })
       .catch(() => undefined);
     return () => { active = false; };
   }, []);
 
   async function saveProfile(event: FormEvent) {
     event.preventDefault();
-    const result = await api<{ profile: { retirementDate: string | null } }>("/api/profile", {
+    const result = await api<{ profile: { retirementDate: string | null; targetFinancialGoal: number } }>("/api/profile", {
       method: "PATCH",
-      body: JSON.stringify({ retirementDate: retirementDate || null })
+      body: JSON.stringify({ retirementDate: retirementDate || null, targetFinancialGoal: Number(targetFinancialGoal) })
     });
     setRetirementDate(result.profile.retirementDate ?? "");
-    setStatus("Saved retirement date");
+    setTargetFinancialGoal(String(result.profile.targetFinancialGoal ?? 1000000));
+    setStatus("Saved profile");
   }
 
   async function downloadExport() {
@@ -699,6 +887,7 @@ function Settings() {
       <div className="settings-grid">
         <form className="settings-form" onSubmit={saveProfile}>
           <label>Target retirement date<input type="date" value={retirementDate} onChange={(event) => setRetirementDate(event.target.value)} /></label>
+          <label>Target financial goal<input type="number" min="1" step="0.01" value={targetFinancialGoal} onChange={(event) => setTargetFinancialGoal(event.target.value)} required /></label>
           <button type="submit"><Save size={16} /> Save</button>
         </form>
         <label>Default currency<select defaultValue="GBP"><option>GBP</option><option>USD</option><option>EUR</option></select></label>

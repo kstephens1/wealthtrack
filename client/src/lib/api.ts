@@ -10,6 +10,9 @@ export type Account = {
   updateFrequency: string;
   tagsJson: string;
   notes: string | null;
+  thumbnailFileName?: string | null;
+  thumbnailMimeType?: string | null;
+  thumbnailUpdatedAt?: string | null;
   isArchived: number;
   latestValue: number | null;
   latestValueDate: string | null;
@@ -29,8 +32,20 @@ export type Account = {
 };
 
 export type ValueEntry = { id: number; accountId: number; value: number; valueDate: string; note: string | null; source: string };
+export type Movement = { change: number; percentChange: number | null };
 export type Dashboard = {
-  totals: { netWorth: number; assets: number; liabilities: number; monthlyChange: { change: number; percentChange: number | null } };
+  totals: {
+    netWorth: number;
+    assets: number;
+    liabilities: number;
+    monthlyChange: Movement;
+    movements?: {
+      netWorth: Movement;
+      assets: Movement;
+      liabilities: Movement;
+      latestChange: Movement;
+    };
+  };
   accounts: Account[];
   allocation: Array<{ category: string; value: number; percent: number }>;
   staleAccounts: Account[];
@@ -38,6 +53,15 @@ export type Dashboard = {
   series: Array<{ date: string; netWorth: number }>;
   projection: {
     retirementDate: string | null;
+    targetFinancialGoal?: number;
+    targetForecast?: {
+      targetValue: number;
+      targetDate: string | null;
+      previousTargetDate: string | null;
+      monthDelta: number | null;
+      dayDelta?: number | null;
+      status: "already_reached" | "projected" | "not_projected" | "insufficient_data";
+    };
     series: Array<{ date: string; predictedNetWorth: number }>;
   };
 };

@@ -31,6 +31,7 @@ function migrate(db: Database.Database) {
       defaultCurrency TEXT NOT NULL DEFAULT 'GBP',
       dateFormat TEXT NOT NULL DEFAULT 'yyyy-MM-dd',
       retirementDate TEXT,
+      targetFinancialGoal REAL NOT NULL DEFAULT 1000000,
       hideBalancesDefault INTEGER NOT NULL DEFAULT 0,
       createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -45,6 +46,9 @@ function migrate(db: Database.Database) {
       updateFrequency TEXT NOT NULL DEFAULT 'monthly',
       tagsJson TEXT NOT NULL DEFAULT '[]',
       notes TEXT,
+      thumbnailFileName TEXT,
+      thumbnailMimeType TEXT,
+      thumbnailUpdatedAt TEXT,
       isArchived INTEGER NOT NULL DEFAULT 0,
       createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -94,6 +98,19 @@ function migrate(db: Database.Database) {
   const profileColumns = db.prepare("PRAGMA table_info(profiles)").all() as Array<{ name: string }>;
   if (!profileColumns.some((column) => column.name === "retirementDate")) {
     db.prepare("ALTER TABLE profiles ADD COLUMN retirementDate TEXT").run();
+  }
+  if (!profileColumns.some((column) => column.name === "targetFinancialGoal")) {
+    db.prepare("ALTER TABLE profiles ADD COLUMN targetFinancialGoal REAL NOT NULL DEFAULT 1000000").run();
+  }
+  const accountColumns = db.prepare("PRAGMA table_info(accounts)").all() as Array<{ name: string }>;
+  if (!accountColumns.some((column) => column.name === "thumbnailFileName")) {
+    db.prepare("ALTER TABLE accounts ADD COLUMN thumbnailFileName TEXT").run();
+  }
+  if (!accountColumns.some((column) => column.name === "thumbnailMimeType")) {
+    db.prepare("ALTER TABLE accounts ADD COLUMN thumbnailMimeType TEXT").run();
+  }
+  if (!accountColumns.some((column) => column.name === "thumbnailUpdatedAt")) {
+    db.prepare("ALTER TABLE accounts ADD COLUMN thumbnailUpdatedAt TEXT").run();
   }
 }
 
