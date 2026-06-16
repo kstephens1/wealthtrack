@@ -6,7 +6,7 @@ import fs from "fs";
 import jwt from "jsonwebtoken";
 import path from "path";
 import { z } from "zod";
-import { allocation, buildNetWorthSeries, buildProjectedNetWorthSeries, buildTargetForecast, monthlyChange, movement, netWorth, staleAccounts, twoPointComparison } from "./calculations";
+import { allocation, buildNetWorthSeries, buildProjectedAccountValueSeries, buildProjectedNetWorthSeries, buildTargetForecast, monthlyChange, movement, netWorth, staleAccounts, twoPointComparison } from "./calculations";
 import { initializeDatabase, openDatabase } from "./db";
 import { Account, AccountWithLatest, ValueEntry } from "./types";
 
@@ -302,14 +302,16 @@ export function createApp(db = openDatabase()) {
   app.get("/api/accounts/:id/values", requireAuth, (req, res) => {
     const account = assertAccount(db, Number(req.params.id), (req as any).user.id, res);
     if (!account) return;
-    const values = db.prepare("SELECT * FROM value_entries WHERE accountId = ? ORDER BY valueDate ASC, id ASC").all(account.id);
+    const values = db.prepare("SELECT * FROM value_entries WHERE accountId = ? ORDER BY valueDate ASC, id ASC").all(account.id) as ValueEntry[];
+    const profile = db.prepare("SELECT retirementDate FROM profiles WHERE userId = ?").get((req as any).user.id) as { retirementDate: string | null } | undefined;
+    const retirementDate = profile?.retirementDate ?? null;
     const compareIds = String(req.query.compare || "").split(",").map(Number).filter(Boolean);
     const compare = compareIds.length === 2 ? twoPointComparison(
       db.prepare("SELECT * FROM value_entries WHERE id = ? AND accountId = ?").get(compareIds[0], account.id) as ValueEntry,
       db.prepare("SELECT * FROM value_entries WHERE id = ? AND accountId = ?").get(compareIds[1], account.id) as ValueEntry,
       account
     ) : null;
-    res.json({ account, values, compare });
+    res.json({ account, values, compare, projection: { retirementDate, series: buildProjectedAccountValueSeries(values, retirementDate) } });
   });
 
   app.post("/api/accounts/:id/values", requireAuth, (req, res) => {

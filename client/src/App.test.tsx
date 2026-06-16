@@ -35,7 +35,10 @@ beforeEach(() => {
         { id: 5, name: "RDG Lump Sum", kind: "asset", category: "Pension", currency: "GBP", updateFrequency: "annually", tagsJson: "[]", notes: null, isArchived: 0, latestValue: 1000, latestValueDate: "2017-03-31", previousValue: 1000, previousValueDate: "2016-03-31" },
         { id: 6, name: "Old Cash", kind: "asset", category: "Cash", currency: "GBP", updateFrequency: "monthly", tagsJson: "[]", notes: null, isArchived: 0, latestValue: 10, latestValueDate: "2026-01-01", previousValue: 10, previousValueDate: "2025-12-01" }
       ],
-      insights: [{ title: "Ready", body: "Manual values are available." }],
+      insights: [
+        { title: "Updates due", body: "3 accounts need a fresh manual value." },
+        { title: "Ready", body: "Manual values are available." }
+      ],
       series: [{ date: "2026-05-01", netWorth: 90 }, { date: "2026-06-01", netWorth: 100 }],
       projection: {
         retirementDate: "2035-06-01",
@@ -48,7 +51,11 @@ beforeEach(() => {
       values: [
         { id: 1, accountId: 1, value: 90, valueDate: "2026-05-01", source: "manual", note: "" },
         { id: 2, accountId: 1, value: 100, valueDate: "2026-06-01", source: "manual", note: "" }
-      ]
+      ],
+      projection: {
+        retirementDate: "2035-06-01",
+        series: [{ date: "2026-06-01", projectedValue: 100 }, { date: "2035-06-01", projectedValue: 200 }]
+      }
     }), { status: 200 });
     return new Response(JSON.stringify({ accounts: [], goals: [], values: [] }), { status: 200 });
   }) as jest.Mock);
@@ -60,12 +67,19 @@ test("dashboard renders masked and unmasked balances", async () => {
   localStorage.setItem("wealthtrack_token", "t");
   render(<App />);
   expect(await screen.findByText("Assets & Liabilities")).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Net worth history" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("button", { name: "1W" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "3M" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "1Y" })).toHaveClass("active");
   expect(screen.getAllByText("£100").length).toBeGreaterThan(0);
   expect(screen.getAllByText("+10.0% +£10").length).toBeGreaterThan(0);
   expect(screen.getByText("+12.5% +£15")).toBeInTheDocument();
   expect(screen.getByText("-16.7% -£5")).toBeInTheDocument();
   expect(screen.getByText("£1,000,000 projected for Jun 1, 2035.")).toBeInTheDocument();
+  expect(screen.getByText("Net worth at retirement")).toBeInTheDocument();
+  expect(screen.getByText("£220 projected for Jun 1, 2035.")).toBeInTheDocument();
+  expect(screen.getByText("+120.0% +£120")).toHaveClass("positive");
+  expect(screen.queryByText("Updates due")).not.toBeInTheDocument();
   expect(screen.getByText("-92 days earlier than previous reading")).toHaveClass("positive");
   expect(screen.queryByText("Target timing change")).not.toBeInTheDocument();
   expect(screen.getByText("KCC Lump Sum")).toBeInTheDocument();
@@ -77,6 +91,15 @@ test("dashboard renders masked and unmasked balances", async () => {
   await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining("/api/accounts/1/image"), expect.any(Object)));
   fireEvent.click(screen.getByTitle("Toggle privacy mode"));
   expect(screen.getAllByText("••••••").length).toBeGreaterThan(0);
+});
+
+test("dashboard chart tabs switch between net worth and allocation", async () => {
+  localStorage.setItem("wealthtrack_token", "t");
+  render(<App />);
+  expect(await screen.findByText("Assets & Liabilities")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("tab", { name: "Allocation" }));
+  expect(screen.getByRole("tab", { name: "Allocation" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("heading", { name: "Allocation" })).toBeInTheDocument();
 });
 
 test("dashboard account list has comparison and sort pickers", async () => {
@@ -126,6 +149,11 @@ test("account value history listing shows latest dated values first", async () =
   render(<App />);
   fireEvent.click(await screen.findByRole("button", { name: /Cash/ }));
   expect(await screen.findByText("Value history")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "1W" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "3M" })).toBeInTheDocument();
+  expect(await screen.findByText("Projected value at retirement")).toBeInTheDocument();
+  expect(screen.getByText("£200 projected for Jun 1, 2035.")).toBeInTheDocument();
+  expect(screen.getByText("+100.0% +£100")).toHaveClass("positive");
   expect(await screen.findByText("Account image")).toBeInTheDocument();
   expect(screen.getByText("Replace image")).toBeInTheDocument();
   expect(screen.getByText("Delete image")).toBeInTheDocument();
@@ -136,6 +164,11 @@ test("account value history listing shows latest dated values first", async () =
   const olderRow = rows.findIndex((row) => row.includes("May 1, 2026"));
   expect(latestRow).toBeGreaterThan(0);
   expect(olderRow).toBeGreaterThan(latestRow);
+
+  fireEvent.click(screen.getByLabelText("Compare 2026-06-01"));
+  expect(screen.getByLabelText("Compare 2026-06-01")).toHaveTextContent("A");
+  fireEvent.click(screen.getByLabelText("Compare 2026-05-01"));
+  expect(screen.getByLabelText("Compare 2026-05-01")).toHaveTextContent("B");
 });
 
 test("insights show target forecast and timing delta", async () => {

@@ -32,6 +32,14 @@ export type Account = {
 };
 
 export type ValueEntry = { id: number; accountId: number; value: number; valueDate: string; note: string | null; source: string };
+export type AccountValueProjection = {
+  retirementDate: string | null;
+  series: Array<{ date: string; projectedValue: number }>;
+};
+export type AccountValuesResponse = {
+  values: ValueEntry[];
+  projection?: AccountValueProjection;
+};
 export type Movement = { change: number; percentChange: number | null };
 export type Dashboard = {
   totals: {

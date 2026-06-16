@@ -1,20 +1,23 @@
 import { Archive, ArrowDownAZ, ArrowDownWideNarrow, BarChart3, Calendar, Check, Clock, Eye, EyeOff, FileDown, FileUp, Gauge, LineChart, LogOut, Menu, Percent, Plus, Save, Settings as SettingsIcon, Tag, Target, Trash2, TrendingUp, X } from "lucide-react";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart as RLineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Account, api, API_BASE, AUTH_INVALID_EVENT, Dashboard, money, ValueEntry } from "./lib/api";
+import { Account, AccountValueProjection, AccountValuesResponse, api, API_BASE, AUTH_INVALID_EVENT, Dashboard, money, ValueEntry } from "./lib/api";
 
 type View = "dashboard" | "accounts" | "review" | "goals" | "insights" | "settings";
-type ChartRange = "all" | "6m" | "1y" | "2y" | "4y" | "8y";
+type ChartRange = "1w" | "3m" | "all" | "6m" | "1y" | "2y" | "4y" | "8y";
+type DashboardChartTab = "netWorth" | "allocation";
 type ComparisonOption = "initial" | "lastUpdate" | "lastMonth" | "lastQuarter" | "yearStart" | "lastYear";
 type SortOption = "name" | "lastUpdate" | "valueDesc" | "type" | "changePercent" | "changeValue";
 
-const chartRanges: Array<{ key: ChartRange; label: string; months: number | null }> = [
-  { key: "all", label: "All", months: null },
+const chartRanges: Array<{ key: ChartRange; label: string; days?: number; months?: number; all?: boolean }> = [
+  { key: "1w", label: "1W", days: 7 },
+  { key: "3m", label: "3M", months: 3 },
   { key: "6m", label: "6M", months: 6 },
   { key: "1y", label: "1Y", months: 12 },
   { key: "2y", label: "2Y", months: 24 },
   { key: "4y", label: "4Y", months: 48 },
-  { key: "8y", label: "8Y", months: 96 }
+  { key: "8y", label: "8Y", months: 96 },
+  { key: "all", label: "All", all: true }
 ];
 const chartGrid = "#2c2c2c";
 const chartAxis = "#9a9a9a";
@@ -164,6 +167,7 @@ function useDashboard() {
 function DashboardView({ hidden, onOpenAccount }: { hidden: boolean; onOpenAccount: (account: Account) => void }) {
   const { dashboard } = useDashboard();
   const [chartRange, setChartRange] = useState<ChartRange>("1y");
+  const [chartTab, setChartTab] = useState<DashboardChartTab>("netWorth");
   if (!dashboard) return <div className="page">Loading...</div>;
   const historicalChartData = dashboard.series.map((point) => ({
     date: point.date,
@@ -179,24 +183,32 @@ function DashboardView({ hidden, onOpenAccount }: { hidden: boolean; onOpenAccou
   })).filter((point) => Number.isFinite(point.timestamp));
   const latestTimestamp = historicalChartData.length ? Math.max(...historicalChartData.map((point) => point.timestamp)) : Date.now();
   const selectedRange = chartRanges.find((range) => range.key === chartRange) ?? chartRanges[0];
-  const rangeStart = selectedRange.months === null ? null : subtractMonths(latestTimestamp, selectedRange.months);
-  const rangeEnd = selectedRange.months === null ? null : addMonths(latestTimestamp, selectedRange.months);
+  const rangeStart = rangeStartForRange(latestTimestamp, selectedRange);
+  const rangeEnd = rangeEndForRange(latestTimestamp, selectedRange);
   const filteredHistoricalData = rangeStart === null ? historicalChartData : historicalChartData.filter((point) => point.timestamp >= rangeStart);
   const filteredProjectedData = rangeEnd === null ? rawProjectedChartData : rawProjectedChartData.filter((point) => point.timestamp <= rangeEnd);
   const projectedChartData = filteredProjectedData.length ? filteredProjectedData : rawProjectedChartData.slice(0, 1);
   const visibleChartData = mergeChartSeries(filteredHistoricalData.length ? filteredHistoricalData : historicalChartData.slice(-1), projectedChartData);
+  const yDomain = lineYAxisDomain(visibleChartData, ["netWorth", "predictedNetWorth"]);
   const predictionLabel = formatPredictionLabel(rawProjectedChartData);
   const dataMin = visibleChartData.length ? Math.min(...visibleChartData.map((point) => point.timestamp)) : latestTimestamp;
   const dataMax = visibleChartData.length ? Math.max(...visibleChartData.map((point) => point.timestamp)) : latestTimestamp;
   const xDomain = paddedDateDomain(dataMin, dataMax);
   const forecast = dashboard.projection.targetForecast;
   const homeAccounts = dashboard.accounts.filter((account) => !account.isArchived);
+  const retirementNetWorth = retirementNetWorthPoint(dashboard);
+  const dashboardInsights = dashboard.insights.filter((insight) => insight.title !== "Updates due");
   const visibleStaleAccounts = dashboard.staleAccounts.filter((account) => !isHiddenDashboardStaleAccount(account));
   return (
     <section className="page">
       <header className="page-header"><h1>Dashboard</h1><span>{homeAccounts.length} active accounts</span></header>
-      <div className="chart-row">
-        <section className="panel wide">
+      <section className="panel wide">
+        <div className="chart-tabs" role="tablist" aria-label="Dashboard charts">
+          <button type="button" role="tab" aria-selected={chartTab === "netWorth"} className={chartTab === "netWorth" ? "active" : ""} onClick={() => setChartTab("netWorth")}>Net worth history</button>
+          <button type="button" role="tab" aria-selected={chartTab === "allocation"} className={chartTab === "allocation" ? "active" : ""} onClick={() => setChartTab("allocation")}>Allocation</button>
+        </div>
+        {chartTab === "netWorth" ? (
+          <>
           <div className="panel-title-row">
             <h2>Net worth history</h2>
             <div className="range-controls" aria-label="Net worth history range">
@@ -217,7 +229,7 @@ function DashboardView({ hidden, onOpenAccount }: { hidden: boolean; onOpenAccou
                 stroke={chartAxis}
                 tick={{ fill: chartAxis }}
               />
-              <YAxis stroke={chartAxis} tick={{ fill: chartAxis }} />
+              <YAxis domain={yDomain} stroke={chartAxis} tick={{ fill: chartAxis }} />
               <Tooltip
                 labelFormatter={(value) => formatChartDate(Number(value))}
                 formatter={(value) => money(Number(value), "GBP", hidden)}
@@ -228,14 +240,16 @@ function DashboardView({ hidden, onOpenAccount }: { hidden: boolean; onOpenAccou
               <Line name={predictionLabel} type="monotone" dataKey="predictedNetWorth" stroke={chartPrediction} strokeWidth={3} strokeDasharray="7 5" dot={false} activeDot={{ r: 4, fill: chartPrediction }} connectNulls={false} />
             </RLineChart>
           </ResponsiveContainer>
-        </section>
-        <section className="panel">
+          </>
+        ) : (
+          <>
           <h2>Allocation</h2>
           <ResponsiveContainer width="100%" height={280}>
             <BarChart data={dashboard.allocation} margin={{ top: 8, right: 18, bottom: 0, left: 48 }}><CartesianGrid strokeDasharray="4 6" stroke={chartGrid} /><XAxis dataKey="category" stroke={chartAxis} tick={{ fill: chartAxis }} /><YAxis stroke={chartAxis} tick={{ fill: chartAxis }} /><Tooltip formatter={(value) => money(Number(value), "GBP", hidden)} contentStyle={{ background: "#1f1f1f", border: "1px solid #333", borderRadius: 8, color: "#fff" }} /><Legend /><Bar dataKey="value" fill={chartGreen} /></BarChart>
           </ResponsiveContainer>
-        </section>
-      </div>
+          </>
+        )}
+      </section>
       <div className="metric-grid">
         <Metric label="Net worth" value={money(dashboard.totals.netWorth, "GBP", hidden)} detail={formatMovement(dashboard.totals.movements?.netWorth ?? dashboard.totals.monthlyChange, "GBP", hidden)} />
         <Metric label="Assets" value={money(dashboard.totals.assets, "GBP", hidden)} detail={formatMovement(dashboard.totals.movements?.assets ?? { change: 0, percentChange: null }, "GBP", hidden)} />
@@ -245,7 +259,8 @@ function DashboardView({ hidden, onOpenAccount }: { hidden: boolean; onOpenAccou
       <AccountSummaryList accounts={homeAccounts} hidden={hidden} onOpen={onOpenAccount} />
       <div className="card-grid">
         {forecast && <TargetForecastCard forecast={forecast} hidden={hidden} />}
-        {dashboard.insights.map((insight) => <article className="card" key={insight.title}><h3>{insight.title}</h3><p>{insight.body}</p></article>)}
+        {retirementNetWorth && <RetirementNetWorthCard point={retirementNetWorth} currentNetWorth={dashboard.totals.netWorth} hidden={hidden} />}
+        {dashboardInsights.map((insight) => <article className="card" key={insight.title}><h3>{insight.title}</h3><p>{insight.body}</p></article>)}
         {visibleStaleAccounts.map((account) => <article className="card warning" key={account.id}><h3>{account.name}</h3><p>Last updated {account.latestValueDate}</p></article>)}
       </div>
     </section>
@@ -269,6 +284,19 @@ function mergeChartSeries(
   return Array.from(byDate.values()).sort((a, b) => a.timestamp - b.timestamp);
 }
 
+function mergeValueChartSeries(
+  historical: Array<{ valueDate: string; timestamp: number; value: number; projectedValue: number | null }>,
+  projected: Array<{ date: string; timestamp: number; value: number | null; projectedValue: number }>
+) {
+  const byDate = new Map<string, { date: string; timestamp: number; value: number | null; projectedValue: number | null }>();
+  for (const point of historical) byDate.set(point.valueDate, { date: point.valueDate, timestamp: point.timestamp, value: point.value, projectedValue: point.projectedValue });
+  for (const point of projected) {
+    const existing = byDate.get(point.date);
+    byDate.set(point.date, existing ? { ...existing, projectedValue: point.projectedValue } : point);
+  }
+  return Array.from(byDate.values()).sort((a, b) => a.timestamp - b.timestamp);
+}
+
 function formatPredictionLabel(projected: Array<{ timestamp: number; predictedNetWorth: number | null }>) {
   const points = projected.filter((point): point is { timestamp: number; predictedNetWorth: number } => point.predictedNetWorth !== null && point.predictedNetWorth > 0).sort((a, b) => a.timestamp - b.timestamp);
   if (points.length < 2) return "Prediction";
@@ -279,6 +307,32 @@ function formatPredictionLabel(projected: Array<{ timestamp: number; predictedNe
   const annualGrowth = Math.pow(last.predictedNetWorth / first.predictedNetWorth, 1 / years) - 1;
   if (!Number.isFinite(annualGrowth)) return "Prediction";
   return `Prediction (${Math.round(annualGrowth * 100)}%)`;
+}
+
+function formatValueProjectionLabel(projected: Array<{ timestamp: number; projectedValue: number | null }>) {
+  const points = projected.filter((point): point is { timestamp: number; projectedValue: number } => point.projectedValue !== null && point.projectedValue > 0).sort((a, b) => a.timestamp - b.timestamp);
+  if (points.length < 2) return "Projection";
+  const first = points[0];
+  const last = points[points.length - 1];
+  const years = (last.timestamp - first.timestamp) / (365 * 24 * 60 * 60 * 1000);
+  if (years <= 0 || first.projectedValue <= 0) return "Projection";
+  const annualGrowth = Math.pow(last.projectedValue / first.projectedValue, 1 / years) - 1;
+  if (!Number.isFinite(annualGrowth)) return "Projection";
+  return `Projection (${Math.round(annualGrowth * 100)}%)`;
+}
+
+function rangeStartForRange(timestamp: number, range: { days?: number; months?: number; all?: boolean }) {
+  if (range.all) return null;
+  if (range.days !== undefined) return addDays(timestamp, -range.days);
+  if (range.months !== undefined) return subtractMonths(timestamp, range.months);
+  return null;
+}
+
+function rangeEndForRange(timestamp: number, range: { days?: number; months?: number; all?: boolean }) {
+  if (range.all) return null;
+  if (range.days !== undefined) return addDays(timestamp, range.days);
+  if (range.months !== undefined) return addMonths(timestamp, range.months);
+  return null;
 }
 
 function subtractMonths(timestamp: number, months: number) {
@@ -293,12 +347,28 @@ function addMonths(timestamp: number, months: number) {
   return date.getTime();
 }
 
+function addDays(timestamp: number, days: number) {
+  const date = new Date(timestamp);
+  date.setDate(date.getDate() + days);
+  return date.getTime();
+}
+
 function paddedDateDomain(min: number, max: number): [number, number] {
   if (min === max) {
     const day = 24 * 60 * 60 * 1000;
     return [min - day, max + day];
   }
   return [min, max];
+}
+
+function lineYAxisDomain<T extends Record<string, unknown>>(data: T[], keys: string[]): [number | "auto", "auto"] {
+  const values = data.flatMap((point) => keys
+    .map((key) => point[key])
+    .filter((value) => value !== null && value !== undefined)
+    .map(Number)
+    .filter(Number.isFinite));
+  if (!values.length) return ["auto", "auto"];
+  return [Math.min(...values), "auto"];
 }
 
 function formatChartDate(timestamp: number) {
@@ -605,11 +675,15 @@ function AccountForm({ onSaved }: { onSaved: () => void }) {
 function AccountDetail({ account, hidden, onBack }: { account: Account; hidden: boolean; onBack: () => void }) {
   const [detailAccount, setDetailAccount] = useState(account);
   const [values, setValues] = useState<ValueEntry[]>([]);
+  const [projection, setProjection] = useState<AccountValueProjection>({ retirementDate: null, series: [] });
   const [selected, setSelected] = useState<number[]>([]);
   const [chartRange, setChartRange] = useState<ChartRange>("all");
   const [entry, setEntry] = useState({ value: "", valueDate: new Date().toISOString().slice(0, 10), note: "" });
   const [imageStatus, setImageStatus] = useState("");
-  const load = () => api<{ values: ValueEntry[] }>(`/api/accounts/${account.id}/values`).then((result) => setValues(result.values));
+  const load = () => api<AccountValuesResponse>(`/api/accounts/${account.id}/values`).then((result) => {
+    setValues(result.values);
+    setProjection(result.projection ?? { retirementDate: null, series: [] });
+  });
   useEffect(() => {
     setDetailAccount(account);
     setImageStatus("");
@@ -617,13 +691,26 @@ function AccountDetail({ account, hidden, onBack }: { account: Account; hidden: 
   }, [account.id]);
   const chartData = values.map((value) => ({
     ...value,
+    projectedValue: null as number | null,
     timestamp: new Date(`${value.valueDate}T00:00:00`).getTime()
   })).filter((value) => Number.isFinite(value.timestamp));
+  const rawProjectedChartData = projection.series.map((point) => ({
+    date: point.date,
+    value: null as number | null,
+    projectedValue: point.projectedValue,
+    timestamp: new Date(`${point.date}T00:00:00`).getTime()
+  })).filter((point) => Number.isFinite(point.timestamp));
   const latestTimestamp = chartData.length ? Math.max(...chartData.map((value) => value.timestamp)) : Date.now();
   const selectedRange = chartRanges.find((range) => range.key === chartRange) ?? chartRanges[0];
-  const rangeStart = selectedRange.months === null ? null : subtractMonths(latestTimestamp, selectedRange.months);
+  const rangeStart = rangeStartForRange(latestTimestamp, selectedRange);
+  const rangeEnd = rangeEndForRange(latestTimestamp, selectedRange);
   const filteredChartData = rangeStart === null ? chartData : chartData.filter((value) => value.timestamp >= rangeStart);
-  const visibleChartData = filteredChartData.length ? filteredChartData : chartData.slice(-1);
+  const filteredProjectedData = rangeEnd === null ? rawProjectedChartData : rawProjectedChartData.filter((point) => point.timestamp <= rangeEnd);
+  const projectedChartData = filteredProjectedData.length ? filteredProjectedData : rawProjectedChartData.slice(0, 1);
+  const visibleChartData = mergeValueChartSeries(filteredChartData.length ? filteredChartData : chartData.slice(-1), projectedChartData);
+  const accountProjectionLabel = formatValueProjectionLabel(rawProjectedChartData);
+  const retirementValue = accountRetirementValuePoint(projection);
+  const yDomain = lineYAxisDomain(visibleChartData, ["value", "projectedValue"]);
   const dataMin = visibleChartData.length ? Math.min(...visibleChartData.map((value) => value.timestamp)) : latestTimestamp;
   const dataMax = visibleChartData.length ? Math.max(...visibleChartData.map((value) => value.timestamp)) : latestTimestamp;
   const xDomain = paddedDateDomain(dataMin, dataMax);
@@ -707,27 +794,33 @@ function AccountDetail({ account, hidden, onBack }: { account: Account; hidden: 
               stroke={chartAxis}
               tick={{ fill: chartAxis }}
             />
-            <YAxis stroke={chartAxis} tick={{ fill: chartAxis }} />
+            <YAxis domain={yDomain} stroke={chartAxis} tick={{ fill: chartAxis }} />
             <Tooltip
               labelFormatter={(value) => formatChartDate(Number(value))}
               formatter={(value) => money(Number(value), account.currency, hidden)}
               contentStyle={{ background: "#1f1f1f", border: "1px solid #333", borderRadius: 8, color: "#fff" }}
             />
-            <Line type="monotone" dataKey="value" stroke={chartGreen} strokeWidth={3} dot={false} activeDot={{ r: 4, fill: chartGreen }} />
+            <Legend />
+            <Line name="Value" type="monotone" dataKey="value" stroke={chartGreen} strokeWidth={3} dot={false} activeDot={{ r: 4, fill: chartGreen }} connectNulls={false} />
+            <Line name={accountProjectionLabel} type="monotone" dataKey="projectedValue" stroke={chartPrediction} strokeWidth={3} strokeDasharray="7 5" dot={false} activeDot={{ r: 4, fill: chartPrediction }} connectNulls={false} />
           </RLineChart>
         </ResponsiveContainer>
       </section>
+      {retirementValue && <AccountRetirementValueCard point={retirementValue} currentValue={Number(detailAccount.latestValue ?? 0)} currency={detailAccount.currency} hidden={hidden} />}
       {compare && <p className="compare-result">Selected: {compare.from.valueDate} to {compare.to.valueDate} = {money(compare.change, account.currency, hidden)} {compare.percent === null ? "(from zero)" : `(${(compare.percent * 100).toFixed(1)}%)`}</p>}
       <div className="table-wrap">
         <table>
           <thead><tr><th>Select</th><th>Date</th><th>Value</th><th>Source</th><th>Note</th><th></th></tr></thead>
-          <tbody>{listedValues.map((value) => (
-            <tr key={value.id} className={selected.includes(value.id) ? "selected" : ""}>
-              <td><button aria-label={`Compare ${value.valueDate}`} onClick={() => setSelected((items) => [...items.filter((id) => id !== value.id), value.id].slice(-2))}>{selected.includes(value.id) ? "B" : "A/B"}</button></td>
+          <tbody>{listedValues.map((value) => {
+            const selectedIndex = selected.indexOf(value.id);
+            return (
+            <tr key={value.id} className={selectedIndex >= 0 ? "selected" : ""}>
+              <td><button aria-label={`Compare ${value.valueDate}`} onClick={() => setSelected((items) => [...items.filter((id) => id !== value.id), value.id].slice(-2))}>{selectedIndex === 0 ? "A" : selectedIndex === 1 ? "B" : "A/B"}</button></td>
               <td>{formatDisplayDate(value.valueDate)}</td><td>{money(value.value, account.currency, hidden)}</td><td>{value.source}</td><td>{value.note}</td>
               <td><button title="Delete value" onClick={async () => { await api(`/api/values/${value.id}`, { method: "DELETE" }); load(); }}><Trash2 size={16} /></button></td>
             </tr>
-          ))}</tbody>
+            );
+          })}</tbody>
         </table>
         <button onClick={() => setSelected([])}>Clear comparison</button>
       </div>
@@ -792,6 +885,30 @@ function TargetForecastCard({ forecast, hidden }: { forecast: NonNullable<Dashbo
   return <article className="card target-goal-card"><h3>Target financial goal</h3><p>{formatTargetForecast(forecast, hidden)}</p>{formatTargetDayDelta(forecast)}</article>;
 }
 
+function RetirementNetWorthCard({ point, currentNetWorth, hidden }: { point: { date: string; predictedNetWorth: number }; currentNetWorth: number; hidden: boolean }) {
+  const change = point.predictedNetWorth - currentNetWorth;
+  const percent = currentNetWorth === 0 ? null : change / Math.abs(currentNetWorth);
+  return (
+    <article className="card target-goal-card">
+      <h3>Net worth at retirement</h3>
+      <p>{money(point.predictedNetWorth, "GBP", hidden)} projected for {formatDisplayDate(point.date)}.</p>
+      <small className={`target-day-delta ${change < 0 ? "negative" : "positive"}`}>{formatAccountChange(change, percent, "GBP", hidden)}</small>
+    </article>
+  );
+}
+
+function AccountRetirementValueCard({ point, currentValue, currency, hidden }: { point: { date: string; projectedValue: number }; currentValue: number; currency: string; hidden: boolean }) {
+  const change = point.projectedValue - currentValue;
+  const percent = currentValue === 0 ? null : change / Math.abs(currentValue);
+  return (
+    <article className="card target-goal-card">
+      <h3>Projected value at retirement</h3>
+      <p>{money(point.projectedValue, currency, hidden)} projected for {formatDisplayDate(point.date)}.</p>
+      <small className={`target-day-delta ${change < 0 ? "negative" : "positive"}`}>{formatAccountChange(change, percent, currency, hidden)}</small>
+    </article>
+  );
+}
+
 function Insights({ hidden }: { hidden: boolean }) {
   const { dashboard } = useDashboard();
   const forecast = dashboard?.projection.targetForecast;
@@ -812,6 +929,24 @@ function formatTargetForecast(forecast: NonNullable<Dashboard["projection"]["tar
   if (forecast.status === "projected" && forecast.targetDate) return `${target} projected for ${formatDisplayDate(forecast.targetDate)}.`;
   if (forecast.status === "insufficient_data") return `Add more net worth history to forecast ${target}.`;
   return `${target} is not projected within the current prediction horizon.`;
+}
+
+function retirementNetWorthPoint(dashboard: Dashboard) {
+  const retirementDate = dashboard.projection.retirementDate;
+  if (!retirementDate) return null;
+  const projected = [...dashboard.projection.series]
+    .filter((point) => Number.isFinite(point.predictedNetWorth))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  return projected.find((point) => point.date === retirementDate) ?? projected[projected.length - 1] ?? null;
+}
+
+function accountRetirementValuePoint(projection: AccountValueProjection) {
+  const retirementDate = projection.retirementDate;
+  if (!retirementDate) return null;
+  const projected = [...projection.series]
+    .filter((point) => Number.isFinite(point.projectedValue))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  return projected.find((point) => point.date === retirementDate) ?? projected[projected.length - 1] ?? null;
 }
 
 function formatTargetDayDelta(forecast: NonNullable<Dashboard["projection"]["targetForecast"]>) {

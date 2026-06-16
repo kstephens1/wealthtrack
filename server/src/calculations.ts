@@ -122,6 +122,28 @@ export function buildProjectedNetWorthSeries(rows: NetWorthSeriesRow[], retireme
   });
 }
 
+export function buildProjectedAccountValueSeries(
+  rows: Array<{ value: number; valueDate: string }>,
+  retirementDate: string | null | undefined
+) {
+  if (!retirementDate || !/^\d{4}-\d{2}-\d{2}$/.test(retirementDate) || rows.length < 2) return [];
+  const sortedRows = [...rows]
+    .filter((row) => /^\d{4}-\d{2}-\d{2}$/.test(row.valueDate) && Number.isFinite(Number(row.value)))
+    .sort((a, b) => a.valueDate.localeCompare(b.valueDate));
+  if (sortedRows.length < 2) return [];
+  const first = sortedRows[0];
+  const latest = sortedRows[sortedRows.length - 1];
+  if (retirementDate <= latest.valueDate) return [];
+
+  const annualRate = projectedAnnualRate({ accountId: 0, kind: "asset", value: first.value, valueDate: first.valueDate }, { accountId: 0, kind: "asset", value: latest.value, valueDate: latest.valueDate });
+  const latestValue = Math.max(0, Number(latest.value));
+  return forecastDates(latest.valueDate, retirementDate).map((date) => {
+    const years = daysBetween(latest.valueDate, date) / 365;
+    const projectedValue = Math.max(0, latestValue * Math.pow(1 + annualRate, years));
+    return { date, projectedValue: Math.round(projectedValue) };
+  });
+}
+
 export type TargetForecast = {
   targetValue: number;
   targetDate: string | null;

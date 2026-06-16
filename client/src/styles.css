@@ -40,6 +40,9 @@ main { min-width: 0; }
 .chart-row { display: grid; grid-template-columns: 1.4fr 1fr; gap: 0.8rem; }
 .panel { padding: 1rem; min-width: 0; }
 .panel h2 { margin: 0 0 0.8rem; font-size: 1.15rem; color: #fff; }
+.chart-tabs { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 1rem; border-bottom: 1px solid var(--line); }
+.chart-tabs button { min-height: 2.35rem; padding: 0 0.8rem; border-color: transparent; border-radius: 8px 8px 0 0; background: transparent; color: var(--muted); }
+.chart-tabs button.active, .chart-tabs button[aria-selected="true"] { background: #343434; color: #fff; font-weight: 700; }
 .panel-title-row { display: flex; align-items: center; justify-content: space-between; gap: 0.8rem; margin-bottom: 0.8rem; }
 .panel-title-row h2 { margin: 0; }
 .range-controls { display: flex; flex-wrap: wrap; gap: 0.35rem; }
