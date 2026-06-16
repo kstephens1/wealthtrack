@@ -35,6 +35,14 @@ export type ValueEntry = { id: number; accountId: number; value: number; valueDa
 export type AccountValueProjection = {
   retirementDate: string | null;
   series: Array<{ date: string; projectedValue: number }>;
+  comparison?: {
+    currentProjectedValue: number;
+    previousProjectedValue: number;
+    change: number;
+    percentChange: number | null;
+    latestValueDate: string;
+    previousValueDate: string;
+  } | null;
 };
 export type AccountValuesResponse = {
   values: ValueEntry[];

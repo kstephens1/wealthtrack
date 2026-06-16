@@ -144,6 +144,30 @@ export function buildProjectedAccountValueSeries(
   });
 }
 
+export function buildProjectedAccountValueComparison(
+  rows: Array<{ value: number; valueDate: string }>,
+  retirementDate: string | null | undefined
+) {
+  if (!retirementDate || !/^\d{4}-\d{2}-\d{2}$/.test(retirementDate)) return null;
+  const sortedRows = [...rows]
+    .filter((row) => /^\d{4}-\d{2}-\d{2}$/.test(row.valueDate) && Number.isFinite(Number(row.value)))
+    .sort((a, b) => a.valueDate.localeCompare(b.valueDate));
+  if (sortedRows.length < 2) return null;
+  const latest = sortedRows[sortedRows.length - 1];
+  const previous = sortedRows[sortedRows.length - 2];
+  const currentProjectedValue = projectedAccountValueAtDate(sortedRows, retirementDate);
+  const previousProjectedValue = projectedAccountValueAtDate(sortedRows.slice(0, -1), retirementDate);
+  if (currentProjectedValue === null || previousProjectedValue === null) return null;
+  return {
+    currentProjectedValue,
+    previousProjectedValue,
+    change: currentProjectedValue - previousProjectedValue,
+    percentChange: previousProjectedValue === 0 ? null : (currentProjectedValue - previousProjectedValue) / Math.abs(previousProjectedValue),
+    latestValueDate: latest.valueDate,
+    previousValueDate: previous.valueDate
+  };
+}
+
 export type TargetForecast = {
   targetValue: number;
   targetDate: string | null;
@@ -215,6 +239,18 @@ function projectedAnnualRate(first: NetWorthSeriesRow, latest: NetWorthSeriesRow
   const annualized = Math.pow(end / start, 365 / days) - 1;
   if (!Number.isFinite(annualized)) return 0;
   return Math.max(-0.15, Math.min(0.15, annualized));
+}
+
+function projectedAccountValueAtDate(rows: Array<{ value: number; valueDate: string }>, targetDate: string) {
+  if (!rows.length) return null;
+  const latest = rows[rows.length - 1];
+  if (targetDate <= latest.valueDate) return null;
+  if (rows.length < 2) return Math.round(Math.max(0, Number(latest.value)));
+  const first = rows[0];
+  const annualRate = projectedAnnualRate({ accountId: 0, kind: "asset", value: first.value, valueDate: first.valueDate }, { accountId: 0, kind: "asset", value: latest.value, valueDate: latest.valueDate });
+  const years = daysBetween(latest.valueDate, targetDate) / 365;
+  const projectedValue = Math.max(0, Math.max(0, Number(latest.value)) * Math.pow(1 + annualRate, years));
+  return Math.round(projectedValue);
 }
 
 function forecastDates(startDate: string, retirementDate: string) {

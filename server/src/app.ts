@@ -6,7 +6,7 @@ import fs from "fs";
 import jwt from "jsonwebtoken";
 import path from "path";
 import { z } from "zod";
-import { allocation, buildNetWorthSeries, buildProjectedAccountValueSeries, buildProjectedNetWorthSeries, buildTargetForecast, monthlyChange, movement, netWorth, staleAccounts, twoPointComparison } from "./calculations";
+import { allocation, buildNetWorthSeries, buildProjectedAccountValueComparison, buildProjectedAccountValueSeries, buildProjectedNetWorthSeries, buildTargetForecast, monthlyChange, movement, netWorth, staleAccounts, twoPointComparison } from "./calculations";
 import { initializeDatabase, openDatabase } from "./db";
 import { Account, AccountWithLatest, ValueEntry } from "./types";
 
@@ -311,7 +311,16 @@ export function createApp(db = openDatabase()) {
       db.prepare("SELECT * FROM value_entries WHERE id = ? AND accountId = ?").get(compareIds[1], account.id) as ValueEntry,
       account
     ) : null;
-    res.json({ account, values, compare, projection: { retirementDate, series: buildProjectedAccountValueSeries(values, retirementDate) } });
+    res.json({
+      account,
+      values,
+      compare,
+      projection: {
+        retirementDate,
+        series: buildProjectedAccountValueSeries(values, retirementDate),
+        comparison: buildProjectedAccountValueComparison(values, retirementDate)
+      }
+    });
   });
 
   app.post("/api/accounts/:id/values", requireAuth, (req, res) => {

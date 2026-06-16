@@ -43,6 +43,13 @@ describe("account values", () => {
     expect(response.body.projection.retirementDate).toBe("2026-09-01");
     expect(response.body.projection.series[0]).toEqual({ date: "2026-06-01", projectedValue: 120 });
     expect(response.body.projection.series.at(-1).date).toBe("2026-09-01");
+    expect(response.body.projection.comparison).toMatchObject({
+      previousProjectedValue: 100,
+      latestValueDate: "2026-06-01",
+      previousValueDate: "2026-01-01"
+    });
+    expect(response.body.projection.comparison.currentProjectedValue).toBeGreaterThan(120);
+    expect(response.body.projection.comparison.change).toBeGreaterThan(20);
   });
 
   it("returns an empty projection without a retirement date", async () => {
@@ -53,6 +60,6 @@ describe("account values", () => {
     const response = await request(app).get(`/api/accounts/${accountId}/values`).set("Authorization", `Bearer ${token}`);
 
     expect(response.status).toBe(200);
-    expect(response.body.projection).toEqual({ retirementDate: null, series: [] });
+    expect(response.body.projection).toEqual({ retirementDate: null, series: [], comparison: null });
   });
 });

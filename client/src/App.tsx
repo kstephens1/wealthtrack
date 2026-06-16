@@ -806,7 +806,7 @@ function AccountDetail({ account, hidden, onBack }: { account: Account; hidden: 
           </RLineChart>
         </ResponsiveContainer>
       </section>
-      {retirementValue && <AccountRetirementValueCard point={retirementValue} currentValue={Number(detailAccount.latestValue ?? 0)} currency={detailAccount.currency} hidden={hidden} />}
+      {retirementValue && <AccountRetirementValueCard point={retirementValue} comparison={projection.comparison ?? null} currentValue={Number(detailAccount.latestValue ?? 0)} currency={detailAccount.currency} hidden={hidden} />}
       {compare && <p className="compare-result">Selected: {compare.from.valueDate} to {compare.to.valueDate} = {money(compare.change, account.currency, hidden)} {compare.percent === null ? "(from zero)" : `(${(compare.percent * 100).toFixed(1)}%)`}</p>}
       <div className="table-wrap">
         <table>
@@ -897,9 +897,22 @@ function RetirementNetWorthCard({ point, currentNetWorth, hidden }: { point: { d
   );
 }
 
-function AccountRetirementValueCard({ point, currentValue, currency, hidden }: { point: { date: string; projectedValue: number }; currentValue: number; currency: string; hidden: boolean }) {
-  const change = point.projectedValue - currentValue;
-  const percent = currentValue === 0 ? null : change / Math.abs(currentValue);
+function AccountRetirementValueCard({
+  point,
+  comparison,
+  currentValue,
+  currency,
+  hidden
+}: {
+  point: { date: string; projectedValue: number };
+  comparison: AccountValueProjection["comparison"] | null;
+  currentValue: number;
+  currency: string;
+  hidden: boolean;
+}) {
+  const fallbackChange = point.projectedValue - currentValue;
+  const change = comparison?.change ?? fallbackChange;
+  const percent = comparison?.percentChange ?? (currentValue === 0 ? null : fallbackChange / Math.abs(currentValue));
   return (
     <article className="card target-goal-card">
       <h3>Projected value at retirement</h3>

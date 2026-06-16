@@ -54,7 +54,15 @@ beforeEach(() => {
       ],
       projection: {
         retirementDate: "2035-06-01",
-        series: [{ date: "2026-06-01", projectedValue: 100 }, { date: "2035-06-01", projectedValue: 200 }]
+        series: [{ date: "2026-06-01", projectedValue: 100 }, { date: "2035-06-01", projectedValue: 200 }],
+        comparison: {
+          currentProjectedValue: 200,
+          previousProjectedValue: 180,
+          change: 20,
+          percentChange: 20 / 180,
+          latestValueDate: "2026-06-01",
+          previousValueDate: "2026-05-01"
+        }
       }
     }), { status: 200 });
     return new Response(JSON.stringify({ accounts: [], goals: [], values: [] }), { status: 200 });
@@ -153,7 +161,7 @@ test("account value history listing shows latest dated values first", async () =
   expect(screen.getByRole("button", { name: "3M" })).toBeInTheDocument();
   expect(await screen.findByText("Projected value at retirement")).toBeInTheDocument();
   expect(screen.getByText("£200 projected for Jun 1, 2035.")).toBeInTheDocument();
-  expect(screen.getByText("+100.0% +£100")).toHaveClass("positive");
+  expect(screen.getByText("+11.1% +£20")).toHaveClass("positive");
   expect(await screen.findByText("Account image")).toBeInTheDocument();
   expect(screen.getByText("Replace image")).toBeInTheDocument();
   expect(screen.getByText("Delete image")).toBeInTheDocument();
