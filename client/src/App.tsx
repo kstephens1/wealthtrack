@@ -1,6 +1,6 @@
 import { Archive, ArrowDownAZ, ArrowDownWideNarrow, BarChart3, Calendar, Check, Clock, Eye, EyeOff, FileDown, FileUp, Gauge, LineChart, LogOut, Menu, Percent, Plus, Save, Settings as SettingsIcon, Tag, Target, Trash2, TrendingUp, X } from "lucide-react";
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
-import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart as RLineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { ChangeEvent, FormEvent, TouchEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart as RLineChart, ReferenceArea, ReferenceDot, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Account, AccountValueProjection, AccountValuesResponse, api, API_BASE, AUTH_INVALID_EVENT, Dashboard, money, ValueEntry } from "./lib/api";
 
 type View = "dashboard" | "accounts" | "review" | "goals" | "insights" | "settings";
@@ -8,6 +8,8 @@ type ChartRange = "1w" | "3m" | "all" | "6m" | "1y" | "2y" | "4y" | "8y";
 type DashboardChartTab = "netWorth" | "allocation";
 type ComparisonOption = "initial" | "lastUpdate" | "lastMonth" | "lastQuarter" | "yearStart" | "lastYear";
 type SortOption = "name" | "lastUpdate" | "valueDesc" | "type" | "changePercent" | "changeValue";
+type ChartComparisonPoint = { date: string; timestamp: number; value: number };
+type ChartComparisonSelection = { a?: ChartComparisonPoint; b?: ChartComparisonPoint };
 
 const chartRanges: Array<{ key: ChartRange; label: string; days?: number; months?: number; all?: boolean }> = [
   { key: "1w", label: "1W", days: 7 },
@@ -23,6 +25,8 @@ const chartGrid = "#2c2c2c";
 const chartAxis = "#9a9a9a";
 const chartGreen = "#56c863";
 const chartPrediction = "#52b7d8";
+const chartNegative = "#ff4040";
+const lineChartMargin = { top: 8, right: 18, bottom: 0, left: 48 };
 const comparisonOptions: Array<{ key: ComparisonOption; label: string; icon: typeof Gauge }> = [
   { key: "initial", label: "Initial Value", icon: Gauge },
   { key: "lastUpdate", label: "Last Update Value", icon: Clock },
@@ -125,14 +129,14 @@ export default function App() {
 }
 
 function Login({ onLogin }: { onLogin: (token: string) => void }) {
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError("");
     try {
-      const result = await api<{ token: string }>("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+      const result = await api<{ token: string }>("/api/auth/login", { method: "POST", body: JSON.stringify({ email: username, password }) });
       onLogin(result.token);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
@@ -142,8 +146,8 @@ function Login({ onLogin }: { onLogin: (token: string) => void }) {
     <main className="login-screen">
       <form className="login-panel" onSubmit={submit}>
         <h1>WealthTrack</h1>
-        <label>Email<input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required /></label>
-        <label>Password<input value={password} onChange={(e) => setPassword(e.target.value)} type="password" required /></label>
+        <label>Username or email<input value={username} onChange={(e) => setUsername(e.target.value)} type="text" autoComplete="username" required /></label>
+        <label>Password<input value={password} onChange={(e) => setPassword(e.target.value)} type="password" autoComplete="current-password" required /></label>
         {error && <p role="alert" className="error">{error}</p>}
         <button type="submit"><LogOut size={18} /> Sign in</button>
       </form>
@@ -168,6 +172,8 @@ function DashboardView({ hidden, onOpenAccount }: { hidden: boolean; onOpenAccou
   const { dashboard } = useDashboard();
   const [chartRange, setChartRange] = useState<ChartRange>("1y");
   const [chartTab, setChartTab] = useState<DashboardChartTab>("netWorth");
+  const [netWorthComparison, setNetWorthComparison] = useState<ChartComparisonSelection>({});
+  const netWorthChartRef = useRef<HTMLDivElement | null>(null);
   if (!dashboard) return <div className="page">Loading...</div>;
   const historicalChartData = dashboard.series.map((point) => ({
     date: point.date,
@@ -189,6 +195,7 @@ function DashboardView({ hidden, onOpenAccount }: { hidden: boolean; onOpenAccou
   const filteredProjectedData = rangeEnd === null ? rawProjectedChartData : rawProjectedChartData.filter((point) => point.timestamp <= rangeEnd);
   const projectedChartData = filteredProjectedData.length ? filteredProjectedData : rawProjectedChartData.slice(0, 1);
   const visibleChartData = mergeChartSeries(filteredHistoricalData.length ? filteredHistoricalData : historicalChartData.slice(-1), projectedChartData);
+  const netWorthComparisonPoints = visibleChartData.map((point) => comparisonPointFromValues(point.date, point.timestamp, point.netWorth, point.predictedNetWorth)).filter(Boolean) as ChartComparisonPoint[];
   const yDomain = lineYAxisDomain(visibleChartData, ["netWorth", "predictedNetWorth"]);
   const predictionLabel = formatPredictionLabel(rawProjectedChartData);
   const dataMin = visibleChartData.length ? Math.min(...visibleChartData.map((point) => point.timestamp)) : latestTimestamp;
@@ -205,7 +212,7 @@ function DashboardView({ hidden, onOpenAccount }: { hidden: boolean; onOpenAccou
       <section className="panel wide">
         <div className="chart-tabs" role="tablist" aria-label="Dashboard charts">
           <button type="button" role="tab" aria-selected={chartTab === "netWorth"} className={chartTab === "netWorth" ? "active" : ""} onClick={() => setChartTab("netWorth")}>Net worth history</button>
-          <button type="button" role="tab" aria-selected={chartTab === "allocation"} className={chartTab === "allocation" ? "active" : ""} onClick={() => setChartTab("allocation")}>Allocation</button>
+          <button type="button" role="tab" aria-selected={chartTab === "allocation"} className={chartTab === "allocation" ? "active" : ""} onClick={() => { setNetWorthComparison({}); setChartTab("allocation"); }}>Allocation</button>
         </div>
         {chartTab === "netWorth" ? (
           <>
@@ -213,12 +220,23 @@ function DashboardView({ hidden, onOpenAccount }: { hidden: boolean; onOpenAccou
             <h2>Net worth history</h2>
             <div className="range-controls" aria-label="Net worth history range">
               {chartRanges.map((range) => (
-                <button key={range.key} className={chartRange === range.key ? "active" : ""} onClick={() => setChartRange(range.key)}>{range.label}</button>
+                <button key={range.key} className={chartRange === range.key ? "active" : ""} onClick={() => { setNetWorthComparison({}); setChartRange(range.key); }}>{range.label}</button>
               ))}
             </div>
           </div>
+          <ChartComparisonSummary selection={netWorthComparison} currency="GBP" hidden={hidden} onClear={() => setNetWorthComparison({})} />
+          <div
+            className="chart-touch-target"
+            ref={netWorthChartRef}
+            onTouchStart={(event) => handleComparisonTouch(event, netWorthChartRef, netWorthComparisonPoints, xDomain, setNetWorthComparison)}
+            onTouchMove={(event) => handleComparisonTouch(event, netWorthChartRef, netWorthComparisonPoints, xDomain, setNetWorthComparison)}
+          >
           <ResponsiveContainer width="100%" height={280}>
-            <RLineChart data={visibleChartData} margin={{ top: 8, right: 18, bottom: 0, left: 48 }}>
+            <RLineChart
+              data={visibleChartData}
+              margin={lineChartMargin}
+              onClick={(state: unknown) => handleComparisonChartClick(state, netWorthComparisonPoints, setNetWorthComparison)}
+            >
               <CartesianGrid strokeDasharray="4 6" stroke={chartGrid} />
               <XAxis
                 dataKey="timestamp"
@@ -236,10 +254,12 @@ function DashboardView({ hidden, onOpenAccount }: { hidden: boolean; onOpenAccou
                 contentStyle={{ background: "#1f1f1f", border: "1px solid #333", borderRadius: 8, color: "#fff" }}
               />
               <Legend />
+              {renderChartComparisonOverlay(netWorthComparison)}
               <Line name="Net worth" type="monotone" dataKey="netWorth" stroke={chartGreen} strokeWidth={3} dot={false} activeDot={{ r: 4, fill: chartGreen }} connectNulls={false} />
               <Line name={predictionLabel} type="monotone" dataKey="predictedNetWorth" stroke={chartPrediction} strokeWidth={3} strokeDasharray="7 5" dot={false} activeDot={{ r: 4, fill: chartPrediction }} connectNulls={false} />
             </RLineChart>
           </ResponsiveContainer>
+          </div>
           </>
         ) : (
           <>
@@ -369,6 +389,102 @@ function lineYAxisDomain<T extends Record<string, unknown>>(data: T[], keys: str
     .filter(Number.isFinite));
   if (!values.length) return ["auto", "auto"];
   return [Math.min(...values), "auto"];
+}
+
+type ComparisonSetter = (value: ChartComparisonSelection | ((current: ChartComparisonSelection) => ChartComparisonSelection)) => void;
+
+function comparisonPointFromValues(date: string, timestamp: number, primary: number | null | undefined, secondary: number | null | undefined): ChartComparisonPoint | null {
+  const value = primary ?? secondary;
+  if (!Number.isFinite(timestamp) || value === null || value === undefined || !Number.isFinite(Number(value))) return null;
+  return { date, timestamp, value: Number(value) };
+}
+
+function handleComparisonChartClick(state: unknown, points: ChartComparisonPoint[], setComparison: ComparisonSetter) {
+  const eventState = state as { activeTooltipIndex?: number; activeLabel?: number | string } | undefined;
+  const index = Number(eventState?.activeTooltipIndex);
+  const point = Number.isInteger(index) && index >= 0 ? points[index] : nearestComparisonPoint(Number(eventState?.activeLabel), points);
+  if (!point) return;
+  setComparison((current) => nextComparisonSelection(current, point));
+}
+
+function handleComparisonTouch(
+  event: TouchEvent<HTMLDivElement>,
+  chartRef: { current: HTMLDivElement | null },
+  points: ChartComparisonPoint[],
+  xDomain: [number, number],
+  setComparison: ComparisonSetter
+) {
+  if (event.touches.length < 2 || !chartRef.current || points.length === 0) return;
+  event.preventDefault();
+  const touches = Array.from(event.touches).slice(0, 2).sort((a, b) => a.clientX - b.clientX);
+  const selected = touches.map((touch) => nearestComparisonPoint(timestampFromTouch(touch.clientX, chartRef.current!, xDomain), points)).filter(Boolean) as ChartComparisonPoint[];
+  if (selected.length === 2) setComparison({ a: selected[0], b: selected[1] });
+}
+
+function timestampFromTouch(clientX: number, container: HTMLDivElement, xDomain: [number, number]) {
+  const bounds = container.getBoundingClientRect();
+  const plotLeft = bounds.left + lineChartMargin.left;
+  const plotRight = bounds.right - lineChartMargin.right;
+  const ratio = Math.max(0, Math.min(1, (clientX - plotLeft) / Math.max(1, plotRight - plotLeft)));
+  return xDomain[0] + ratio * (xDomain[1] - xDomain[0]);
+}
+
+function nearestComparisonPoint(timestamp: number, points: ChartComparisonPoint[]) {
+  if (!Number.isFinite(timestamp) || points.length === 0) return null;
+  return points.reduce((nearest, point) => Math.abs(point.timestamp - timestamp) < Math.abs(nearest.timestamp - timestamp) ? point : nearest, points[0]);
+}
+
+function nextComparisonSelection(current: ChartComparisonSelection, point: ChartComparisonPoint): ChartComparisonSelection {
+  if (!current.a || current.b) return { a: point };
+  if (current.a.timestamp === point.timestamp) return { a: point };
+  return { a: current.a, b: point };
+}
+
+function chartComparisonChange(selection: ChartComparisonSelection) {
+  if (!selection.a || !selection.b) return null;
+  const change = selection.b.value - selection.a.value;
+  return {
+    change,
+    percentChange: selection.a.value === 0 ? null : change / Math.abs(selection.a.value),
+    positive: change >= 0
+  };
+}
+
+function ChartComparisonSummary({ selection, currency, hidden, onClear }: { selection: ChartComparisonSelection; currency: string; hidden: boolean; onClear: () => void }) {
+  const comparison = chartComparisonChange(selection);
+  if (!selection.a || !selection.b || !comparison) return null;
+  const trendClass = comparison.positive ? "positive" : "negative";
+  return (
+    <div className={`chart-comparison-summary ${trendClass}`}>
+      <strong>{formatDisplayDate(selection.a.date)} - {formatDisplayDate(selection.b.date)}</strong>
+      <span>{signedMoney(comparison.change, currency, hidden)}</span>
+      <span>{formatComparisonPercent(comparison.percentChange)}</span>
+      <button type="button" className="link-button" onClick={onClear}>Clear comparison</button>
+    </div>
+  );
+}
+
+function renderChartComparisonOverlay(selection: ChartComparisonSelection) {
+  const comparison = chartComparisonChange(selection);
+  if (!selection.a) return null;
+  const stroke = comparison ? (comparison.positive ? chartGreen : chartNegative) : chartGreen;
+  const a = selection.a;
+  const b = selection.b;
+  const areaX1 = b ? Math.min(a.timestamp, b.timestamp) : null;
+  const areaX2 = b ? Math.max(a.timestamp, b.timestamp) : null;
+  return [
+    b && areaX1 !== null && areaX2 !== null ? <ReferenceArea key="comparison-area" x1={areaX1} x2={areaX2} strokeOpacity={0} fill={stroke} fillOpacity={0.16} /> : null,
+    <ReferenceLine key="comparison-a-line" x={a.timestamp} stroke={stroke} strokeWidth={2} />,
+    <ReferenceDot key="comparison-a-dot" x={a.timestamp} y={a.value} r={7} fill={stroke} stroke="#050505" strokeWidth={3} />,
+    b ? <ReferenceLine key="comparison-b-line" x={b.timestamp} stroke={stroke} strokeWidth={2} /> : null,
+    b ? <ReferenceDot key="comparison-b-dot" x={b.timestamp} y={b.value} r={7} fill={stroke} stroke="#050505" strokeWidth={3} /> : null
+  ];
+}
+
+function formatComparisonPercent(percent: number | null) {
+  if (percent === null) return "from zero";
+  const sign = percent >= 0 ? "+" : "-";
+  return `${sign}${Math.abs(percent * 100).toFixed(1)}%`;
 }
 
 function formatChartDate(timestamp: number) {
@@ -677,9 +793,11 @@ function AccountDetail({ account, hidden, onBack }: { account: Account; hidden: 
   const [values, setValues] = useState<ValueEntry[]>([]);
   const [projection, setProjection] = useState<AccountValueProjection>({ retirementDate: null, series: [] });
   const [selected, setSelected] = useState<number[]>([]);
+  const [valueChartComparison, setValueChartComparison] = useState<ChartComparisonSelection>({});
   const [chartRange, setChartRange] = useState<ChartRange>("all");
   const [entry, setEntry] = useState({ value: "", valueDate: new Date().toISOString().slice(0, 10), note: "" });
   const [imageStatus, setImageStatus] = useState("");
+  const valueChartRef = useRef<HTMLDivElement | null>(null);
   const load = () => api<AccountValuesResponse>(`/api/accounts/${account.id}/values`).then((result) => {
     setValues(result.values);
     setProjection(result.projection ?? { retirementDate: null, series: [] });
@@ -687,6 +805,7 @@ function AccountDetail({ account, hidden, onBack }: { account: Account; hidden: 
   useEffect(() => {
     setDetailAccount(account);
     setImageStatus("");
+    setValueChartComparison({});
     load();
   }, [account.id]);
   const chartData = values.map((value) => ({
@@ -708,6 +827,7 @@ function AccountDetail({ account, hidden, onBack }: { account: Account; hidden: 
   const filteredProjectedData = rangeEnd === null ? rawProjectedChartData : rawProjectedChartData.filter((point) => point.timestamp <= rangeEnd);
   const projectedChartData = filteredProjectedData.length ? filteredProjectedData : rawProjectedChartData.slice(0, 1);
   const visibleChartData = mergeValueChartSeries(filteredChartData.length ? filteredChartData : chartData.slice(-1), projectedChartData);
+  const valueComparisonPoints = visibleChartData.map((point) => comparisonPointFromValues(point.date, point.timestamp, point.value, point.projectedValue)).filter(Boolean) as ChartComparisonPoint[];
   const accountProjectionLabel = formatValueProjectionLabel(rawProjectedChartData);
   const retirementValue = accountRetirementValuePoint(projection);
   const yDomain = lineYAxisDomain(visibleChartData, ["value", "projectedValue"]);
@@ -778,12 +898,23 @@ function AccountDetail({ account, hidden, onBack }: { account: Account; hidden: 
           <h2>Value history</h2>
           <div className="range-controls" aria-label={`${account.name} value history range`}>
             {chartRanges.map((range) => (
-              <button key={range.key} className={chartRange === range.key ? "active" : ""} onClick={() => setChartRange(range.key)}>{range.label}</button>
+              <button key={range.key} className={chartRange === range.key ? "active" : ""} onClick={() => { setValueChartComparison({}); setChartRange(range.key); }}>{range.label}</button>
             ))}
           </div>
         </div>
+        <ChartComparisonSummary selection={valueChartComparison} currency={account.currency} hidden={hidden} onClear={() => setValueChartComparison({})} />
+        <div
+          className="chart-touch-target"
+          ref={valueChartRef}
+          onTouchStart={(event) => handleComparisonTouch(event, valueChartRef, valueComparisonPoints, xDomain, setValueChartComparison)}
+          onTouchMove={(event) => handleComparisonTouch(event, valueChartRef, valueComparisonPoints, xDomain, setValueChartComparison)}
+        >
         <ResponsiveContainer width="100%" height={260}>
-          <RLineChart data={visibleChartData}>
+          <RLineChart
+            data={visibleChartData}
+            margin={lineChartMargin}
+            onClick={(state: unknown) => handleComparisonChartClick(state, valueComparisonPoints, setValueChartComparison)}
+          >
             <CartesianGrid strokeDasharray="4 6" stroke={chartGrid} />
             <XAxis
               dataKey="timestamp"
@@ -801,10 +932,12 @@ function AccountDetail({ account, hidden, onBack }: { account: Account; hidden: 
               contentStyle={{ background: "#1f1f1f", border: "1px solid #333", borderRadius: 8, color: "#fff" }}
             />
             <Legend />
+            {renderChartComparisonOverlay(valueChartComparison)}
             <Line name="Value" type="monotone" dataKey="value" stroke={chartGreen} strokeWidth={3} dot={false} activeDot={{ r: 4, fill: chartGreen }} connectNulls={false} />
             <Line name={accountProjectionLabel} type="monotone" dataKey="projectedValue" stroke={chartPrediction} strokeWidth={3} strokeDasharray="7 5" dot={false} activeDot={{ r: 4, fill: chartPrediction }} connectNulls={false} />
           </RLineChart>
         </ResponsiveContainer>
+        </div>
       </section>
       {retirementValue && <AccountRetirementValueCard point={retirementValue} comparison={projection.comparison ?? null} currentValue={Number(detailAccount.latestValue ?? 0)} currency={detailAccount.currency} hidden={hidden} />}
       {compare && <p className="compare-result">Selected: {compare.from.valueDate} to {compare.to.valueDate} = {money(compare.change, account.currency, hidden)} {compare.percent === null ? "(from zero)" : `(${(compare.percent * 100).toFixed(1)}%)`}</p>}

@@ -3,6 +3,8 @@ import bcrypt from "bcryptjs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { initializeDatabase } from "../src/db";
 import { netWorth } from "../src/calculations";
+import { createApp } from "../src/app";
+import request from "supertest";
 
 let db: Database.Database;
 
@@ -69,6 +71,16 @@ describe("persistence workflows", () => {
 
     const user = db.prepare("SELECT passwordHash FROM users WHERE email = ?").get("test@example.com") as { passwordHash: string };
     expect(bcrypt.compareSync("new-password", user.passwordHash)).toBe(true);
+  });
+
+  it("allows a username as the login identifier", async () => {
+    const info = db.prepare("INSERT INTO users (email, passwordHash) VALUES (?, ?)").run("demo", bcrypt.hashSync("demo", 4));
+    db.prepare("INSERT INTO profiles (userId, name, defaultCurrency) VALUES (?, ?, ?)").run(info.lastInsertRowid, "Demo", "GBP");
+
+    const response = await request(createApp(db)).post("/api/auth/login").send({ email: "demo", password: "demo" });
+
+    expect(response.status).toBe(200);
+    expect(response.body.user.email).toBe("demo");
   });
 
   it("defaults profiles to a one million target financial goal", () => {

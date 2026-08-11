@@ -77,7 +77,7 @@ export function createApp(db = openDatabase()) {
   app.get("/api/hello", (_req, res) => res.json({ ok: true, name: "WealthTrack" }));
 
   app.post("/api/auth/login", (req, res) => {
-    const parsed = z.object({ email: z.string().email(), password: z.string().min(1) }).safeParse(req.body);
+    const parsed = z.object({ email: z.string().trim().min(1), password: z.string().min(1) }).safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Invalid credentials payload" });
     const user = db.prepare("SELECT id, email, passwordHash FROM users WHERE email = ?").get(parsed.data.email) as any;
     if (!user || !bcrypt.compareSync(parsed.data.password, user.passwordHash)) return res.status(401).json({ error: "Invalid email or password" });

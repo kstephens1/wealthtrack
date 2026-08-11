@@ -215,6 +215,6 @@ test("invalid session clears the stored token and returns to login", async () =>
   }) as jest.Mock);
   localStorage.setItem("wealthtrack_token", "stale");
   render(<App />);
-  expect(await screen.findByLabelText("Email")).toBeInTheDocument();
+  expect(await screen.findByLabelText("Username or email")).toBeInTheDocument();
   expect(localStorage.getItem("wealthtrack_token")).toBeNull();
 });

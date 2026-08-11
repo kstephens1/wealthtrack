@@ -48,6 +48,14 @@ main { min-width: 0; }
 .range-controls { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 .range-controls button { min-height: 2rem; min-width: 3rem; padding: 0 0.6rem; border-color: transparent; background: transparent; color: #fff; }
 .range-controls button.active { border-color: transparent; background: #343434; color: #fff; font-weight: 700; }
+.chart-touch-target { touch-action: pan-y; }
+.chart-comparison-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; min-height: 2.4rem; margin: 0 0 0.7rem; padding: 0.55rem 0.65rem; border-left: 4px solid var(--accent); background: #171717; }
+.chart-comparison-summary strong { color: #fff; }
+.chart-comparison-summary span { font-size: 1.1rem; font-weight: 800; }
+.chart-comparison-summary.positive { border-left-color: var(--accent); }
+.chart-comparison-summary.positive span { color: var(--accent); }
+.chart-comparison-summary.negative { border-left-color: #ff4040; }
+.chart-comparison-summary.negative span { color: #ff6b6b; }
 .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.8rem; }
 .insight-stack { display: grid; gap: 0.8rem; max-width: 860px; }
 .card { padding: 1rem; display: grid; gap: 0.5rem; background: #202020; }
