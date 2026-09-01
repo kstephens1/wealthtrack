@@ -33,6 +33,8 @@ const imageMimeExtensions: Record<string, string> = {
   "image/webp": "webp"
 };
 const maxImageBytes = 512 * 1024;
+const sessionDurationDays = 365;
+const sessionDurationMs = sessionDurationDays * 24 * 60 * 60 * 1000;
 
 export function createApp(db = openDatabase()) {
   initializeDatabase(db);
@@ -59,7 +61,7 @@ export function createApp(db = openDatabase()) {
   app.use(cookieParser());
 
   const jwtSecret = process.env.JWT_SECRET || "dev-only-change-me";
-  const tokenFor = (user: { id: number; email: string }) => jwt.sign({ sub: user.id, email: user.email }, jwtSecret, { expiresIn: "12h" });
+  const tokenFor = (user: { id: number; email: string }) => jwt.sign({ sub: user.id, email: user.email }, jwtSecret, { expiresIn: `${sessionDurationDays}d` });
 
   function requireAuth(req: Request, res: Response, next: NextFunction) {
     const header = req.headers.authorization;
@@ -82,7 +84,7 @@ export function createApp(db = openDatabase()) {
     const user = db.prepare("SELECT id, email, passwordHash FROM users WHERE email = ?").get(parsed.data.email) as any;
     if (!user || !bcrypt.compareSync(parsed.data.password, user.passwordHash)) return res.status(401).json({ error: "Invalid email or password" });
     const token = tokenFor(user);
-    res.cookie("wealthtrack_token", token, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: 12 * 60 * 60 * 1000 });
+    res.cookie("wealthtrack_token", token, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: sessionDurationMs });
     res.json({ token, user: { id: user.id, email: user.email } });
   });
 

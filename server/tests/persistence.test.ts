@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { initializeDatabase } from "../src/db";
 import { netWorth } from "../src/calculations";
@@ -81,6 +82,17 @@ describe("persistence workflows", () => {
 
     expect(response.status).toBe(200);
     expect(response.body.user.email).toBe("demo");
+  });
+
+  it("issues login cookies and tokens that expire after one year", async () => {
+    const issuedAt = Math.floor(Date.now() / 1000);
+    const response = await request(createApp(db)).post("/api/auth/login").send({ email: "test@example.com", password: "password123" });
+    const payload = jwt.decode(response.body.token) as { iat: number; exp: number };
+
+    expect(response.status).toBe(200);
+    expect(payload.exp - payload.iat).toBe(365 * 24 * 60 * 60);
+    expect(payload.iat).toBeGreaterThanOrEqual(issuedAt);
+    expect(response.headers["set-cookie"]).toEqual(expect.arrayContaining([expect.stringContaining("Max-Age=31536000")]));
   });
 
   it("defaults profiles to a one million target financial goal", () => {
